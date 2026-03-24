@@ -2439,29 +2439,29 @@ async function insertDummy() {
   if (cnt > 0) return;
   const now = nowISO();
   const sid1='sid_kimetsu', sid2='sid_shingeki';
-  const a1='吾峠呼世晴', t1='鬼滅の刃';
-  const a2='諫山創',     t2='進撃の巨人';
+  const a1='まどめクレテック', t1='生活保護特区を出よ。';
+  const a2='ハトポポコ',     t2='平成生まれ';
   const books = [
     ...[1,2,3,4].map(v => ({
       id: makeId(a1,t1,v,'manga'), type:'manga', title:t1, author:a1,
-      isbn: ['9784088812342','9784088812359','9784088812366','9784088812373'][v-1]||'',
+      isbn: ['9784845861316','9784845861323','9784845866045','9784845867721'][v-1]||'',
       series_id:sid1, volume:v,
-      publisher:'集英社', published_date: ['201602','201604','201605','201607'][v-1]||'',
+      publisher:'リイド社', published_date: ['220723','220723','231027','241121'][v-1]||'',
       memo:'', status: v===3?'lending':'available',
       borrower: v===3?'田中太郎':'', borrow_date: v===3?today():'',
       created_at:now, updated_at:now,
     })),
     ...[1,2,3].map(v => ({
       id: makeId(a2,t2,v,'manga'), type:'manga', title:t2, author:a2,
-      isbn: ['9784063847611','9784063847628','9784063847635'][v-1]||'',
+      isbn: ['9784832240971','9784832242265','9784832244597'][v-1]||'',
       series_id:sid2, volume:v,
-      publisher:'講談社', published_date: ['200906','200910','201001'][v-1]||'',
+      publisher:'芳文社', published_date: ['111226','121127','140627'][v-1]||'',
       memo: v===1?'初版':'', status:'available', borrower:'', borrow_date:'',
       created_at:now, updated_at:now,
     })),
     { id:makeId('ピーター・ティール','ゼロ・トゥ・ワン',null,'book'), type:'book', title:'ゼロ・トゥ・ワン', author:'ピーター・ティール', isbn:'9784140816615', series_id:null, volume:null, publisher:'NHK出版', published_date:'201409', memo:'必読', status:'available', borrower:'', borrow_date:'', created_at:now, updated_at:now },
     { id:makeId('ユヴァル・ノア・ハラリ','サピエンス全史 上',null,'book'), type:'book', title:'サピエンス全史 上', author:'ユヴァル・ノア・ハラリ', isbn:'9784309226712', series_id:null, volume:null, publisher:'河出書房新社', published_date:'201609', memo:'', status:'available', borrower:'', borrow_date:'', created_at:now, updated_at:now },
-    { id:makeId('','WIRED Vol.50',null,'magazine'), type:'magazine', title:'WIRED Vol.50', author:'', isbn:'9784048970051', series_id:null, volume:null, publisher:'KADOKAWA', published_date:'202301', memo:'', status:'available', borrower:'', borrow_date:'', created_at:now, updated_at:now },
+    { id:makeId('','WIRED Vol.30',null,'magazine'), type:'magazine', title:'WIRED Vol.30', author:'', isbn:'9784048970051', series_id:null, volume:null, publisher:'KADOKAWA', published_date:'202301', memo:'', status:'available', borrower:'', borrow_date:'', created_at:now, updated_at:now },
   ];
   await dbPutMany(books);
 }
