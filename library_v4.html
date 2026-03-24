@@ -1,0 +1,2532 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>蔵書管理 v4</title>
+<!-- PapaParse: CSV処理 (RFC4180準拠、文字コード対応) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<!-- ZXing: バーコード読取 - 初回スキャン時にlazyロード -->
+<script>
+function loadZXing() {
+  if (window.ZXing || window._zxingLoading) return Promise.resolve();
+  if (window._zxingPromise) return window._zxingPromise;
+  window._zxingLoading = true;
+  window._zxingPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js';
+    s.onload  = () => { window._zxingLoading = false; resolve(); };
+    s.onerror = () => { window._zxingLoading = false; reject(new Error('ZXing読込失敗')); };
+    document.head.appendChild(s);
+  });
+  return window._zxingPromise;
+}
+</script>
+<style>
+/* ===== Theme Variables ===== */
+:root {
+  --radius: 8px; --radius-lg: 12px;
+  --accent: #7c6af7; --danger: #f87171; --warning: #fbbf24;
+  --success: #34d399; --manga: #f472b6; --book: #60a5fa;
+  --magazine: #fb923c; --other: #a78bfa;
+}
+[data-theme="dark"] {
+  --bg: #0f1117; --surface: #1a1d27; --surface2: #232635;
+  --border: #2e3247; --text: #e2e8f0; --text2: #94a3b8;
+  --text3: #64748b; --input-bg: #0f1117;
+}
+[data-theme="light"] {
+  --bg: #f1f5f9; --surface: #ffffff; --surface2: #f8fafc;
+  --border: #e2e8f0; --text: #0f172a; --text2: #475569;
+  --text3: #94a3b8; --input-bg: #ffffff;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 15px; }
+body {
+  font-family: 'Hiragino Sans', 'Yu Gothic UI', sans-serif;
+  background: var(--bg); color: var(--text);
+  min-height: 100vh; line-height: 1.6;
+  transition: background 0.2s, color 0.2s;
+}
+button { cursor: pointer; font-family: inherit; touch-action: manipulation; }
+input, select, textarea { font-family: inherit; }
+a { touch-action: manipulation; }
+
+#app { display: flex; flex-direction: column; min-height: 100vh; }
+
+/* ===== Header ===== */
+header {
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 0 20px; height: 56px; display: flex; align-items: center;
+  gap: 12px; position: sticky; top: 0; z-index: 100;
+}
+.header-logo { font-size: 1.05rem; font-weight: 700; letter-spacing: .04em; white-space: nowrap; }
+.header-logo span { color: var(--accent); }
+.header-search { flex: 1; max-width: 380px; position: relative; }
+.header-search input {
+  width: 100%; padding: 7px 12px 7px 34px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); color: var(--text); font-size: .875rem;
+}
+.header-search input:focus { outline: none; border-color: var(--accent); }
+.header-search .icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text3); pointer-events: none; }
+.header-right { display: flex; gap: 8px; margin-left: auto; align-items: center; }
+.theme-btn {
+  width: 34px; height: 34px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface2);
+  color: var(--text2); display: flex; align-items: center; justify-content: center;
+  font-size: 1rem; transition: border-color .15s, color .15s;
+}
+.theme-btn:hover { border-color: var(--accent); color: var(--accent); }
+main { flex: 1; padding: 20px; max-width: 1280px; width: 100%; margin: 0 auto; }
+
+/* ===== Buttons ===== */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px; border-radius: var(--radius);
+  font-size: .875rem; font-weight: 500;
+  border: 1px solid transparent; transition: background-color .15s, border-color .15s, color .15s; white-space: nowrap;
+}
+.btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-primary:hover { background: #6b5ce7; }
+.btn-secondary { background: var(--surface2); color: var(--text); border-color: var(--border); }
+.btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+.btn-danger { background: transparent; color: var(--danger); border-color: var(--danger); }
+.btn-danger:hover { background: var(--danger); color: #fff; }
+.btn-sm { padding: 4px 10px; font-size: .8rem; }
+.btn-icon { padding: 5px; background: transparent; border: none; color: var(--text3); font-size: .9rem; border-radius: 4px; }
+.btn-icon:hover { color: var(--text); background: var(--surface2); }
+
+/* ===== Type Tabs ===== */
+.type-tabs {
+  display: flex; gap: 4px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 4px; margin-bottom: 16px; overflow-x: auto;
+}
+.type-tab {
+  flex: 1; min-width: 58px; padding: 7px 12px;
+  border: none; background: transparent; border-radius: 8px;
+  color: var(--text2); font-size: .85rem; font-weight: 500;
+  transition: background-color .15s, color .15s; white-space: nowrap;
+}
+.type-tab.active { background: var(--surface2); color: var(--text); }
+.type-tab[data-type="all"].active      { color: var(--accent); }
+.type-tab[data-type="manga"].active    { color: var(--manga); }
+.type-tab[data-type="book"].active     { color: var(--book); }
+.type-tab[data-type="magazine"].active { color: var(--magazine); }
+.type-tab[data-type="other"].active    { color: var(--other); }
+.type-tab .cnt {
+  display: inline-block; min-width: 18px; height: 18px;
+  background: var(--bg); border-radius: 9px;
+  font-size: .7rem; line-height: 18px; text-align: center;
+  padding: 0 4px; margin-left: 4px;
+}
+
+/* ===== Filter Bar ===== */
+.filter-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+.filter-bar select {
+  padding: 7px 10px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text); font-size: .85rem;
+}
+.filter-bar select:focus { outline: none; border-color: var(--accent); }
+.filter-spacer { flex: 1; }
+
+/* ===== Table ===== */
+.table-wrap { overflow-x: auto; border-radius: var(--radius-lg); border: 1px solid var(--border); }
+table { width: 100%; border-collapse: collapse; font-size: .875rem; }
+thead th {
+  background: var(--surface); padding: 10px 14px; text-align: left;
+  font-weight: 600; color: var(--text2); font-size: .78rem;
+  letter-spacing: .05em; white-space: nowrap; user-select: none;
+}
+tbody tr { border-top: 1px solid var(--border); transition: background .1s; }
+tbody tr:hover { background: var(--surface); }
+tbody td { padding: 10px 14px; vertical-align: middle; }
+.td-title .t { font-weight: 500; }
+.td-title .s { font-size: .74rem; color: var(--text3); margin-top: 1px; }
+.td-actions { white-space: nowrap; display: flex; gap: 4px; align-items: center; }
+
+/* ===== Badges ===== */
+.badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 99px; font-size: .72rem; font-weight: 600; white-space: nowrap; }
+.bs-available { background: rgba(52,211,153,.15); color: var(--success); }
+.bs-lending   { background: rgba(251,191,36,.15);  color: var(--warning); }
+.bs-lost      { background: rgba(248,113,113,.15); color: var(--danger); }
+.bs-disposed  { background: rgba(100,116,139,.15); color: var(--text3); }
+.bt-manga    { background: rgba(244,114,182,.15); color: var(--manga); }
+.bt-book     { background: rgba(96,165,250,.15);  color: var(--book); }
+.bt-magazine { background: rgba(251,146,60,.15);  color: var(--magazine); }
+.bt-other    { background: rgba(167,139,250,.15); color: var(--other); }
+.badge-api { background: rgba(94,234,212,.12); color: #2dd4bf; font-size: .68rem; }
+
+/* ===== Pagination ===== */
+.pagination { display: flex; align-items: center; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.pg-info { color: var(--text2); font-size: .85rem; flex: 1; }
+.pg-btns { display: flex; gap: 4px; }
+.pg-btn {
+  min-width: 32px; height: 32px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--text2); font-size: .85rem;
+  display: flex; align-items: center; justify-content: center;
+}
+.pg-btn:hover { border-color: var(--accent); color: var(--accent); }
+.pg-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pg-btn:disabled { opacity: .4; pointer-events: none; }
+
+/* ===== Modal ===== */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.65);
+  z-index: 200; display: flex; align-items: center; justify-content: center;
+  padding: 16px; opacity: 0; pointer-events: none; transition: opacity .18s;
+}
+.modal-overlay.open { opacity: 1; pointer-events: all; }
+.modal {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); width: 100%; max-width: 560px;
+  max-height: 92vh; overflow-y: auto;
+  transform: translateY(6px); transition: transform .18s;
+}
+.modal-overlay.open .modal { transform: translateY(0); }
+.modal-header {
+  padding: 16px 20px 12px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  position: sticky; top: 0; background: var(--surface); z-index: 1;
+}
+.modal-title { font-size: .95rem; font-weight: 700; }
+.modal-body { padding: 18px 20px; }
+.modal-footer {
+  padding: 12px 20px 16px; border-top: 1px solid var(--border);
+  display: flex; gap: 8px; justify-content: flex-end;
+  position: sticky; bottom: 0; background: var(--surface); z-index: 1;
+}
+
+/* ===== Form ===== */
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-grid .span2 { grid-column: span 2; }
+.form-group { display: flex; flex-direction: column; gap: 4px; }
+.form-group label { font-size: .78rem; font-weight: 600; color: var(--text2); }
+.form-group input,
+.form-group select,
+.form-group textarea {
+  padding: 8px 10px; background: var(--input-bg);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text); font-size: .875rem;
+}
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus { outline: none; border-color: var(--accent); }
+.form-group textarea { resize: vertical; min-height: 60px; }
+.form-hint { font-size: .74rem; color: var(--text3); }
+
+/* ISBN入力 + スキャンボタン */
+.isbn-row { display: flex; gap: 6px; align-items: center; }
+.isbn-row input { flex: 1; }
+.isbn-scan-btn {
+  padding: 8px 10px; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text2); font-size: .85rem; white-space: nowrap;
+  transition: border-color .15s, color .15s; flex-shrink: 0;
+}
+.isbn-scan-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ===== Scanner UI ===== */
+.scanner-wrap {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px; margin-top: 10px;
+}
+.scanner-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.sc-tab {
+  flex: 1; padding: 6px; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text2); font-size: .82rem; font-weight: 500; transition: background-color .15s, border-color .15s, color .15s;
+}
+.sc-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+#scanner-video-wrap { position: relative; width: 100%; border-radius: 6px; overflow: hidden; background: #000; }
+#scanner-video { width: 100%; max-height: 240px; object-fit: cover; display: block; }
+.scanner-overlay {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+}
+.scanner-guide {
+  width: 70%; height: 50%; border: 2px solid var(--accent);
+  border-radius: 6px; box-shadow: 0 0 0 4000px rgba(0,0,0,.35);
+}
+.scanner-status {
+  margin-top: 8px; padding: 7px 10px; border-radius: 6px;
+  font-size: .82rem; font-weight: 500;
+}
+.ss-idle    { background: var(--surface2); color: var(--text2); }
+.ss-scan    { background: rgba(124,106,247,.15); color: var(--accent); }
+.ss-ok      { background: rgba(52,211,153,.15); color: var(--success); }
+.ss-err     { background: rgba(248,113,113,.15); color: var(--danger); }
+.ss-warn    { background: rgba(251,191,36,.15); color: var(--warning); }
+#img-drop-zone {
+  border: 2px dashed var(--border); border-radius: var(--radius);
+  padding: 28px; text-align: center; color: var(--text3);
+  font-size: .85rem; cursor: pointer; transition: border-color .15s, color .15s;
+}
+#img-drop-zone:hover, #img-drop-zone.drag-over { border-color: var(--accent); color: var(--accent); }
+#img-preview { width: 100%; border-radius: 6px; margin-top: 8px; display: none; }
+
+/* ===== Series Volume Picker ===== */
+.series-box { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-top: 8px; }
+.series-box-title { font-size: .8rem; font-weight: 600; color: var(--text2); margin-bottom: 8px; }
+.vol-controls { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.vol-controls label { font-size: .8rem; color: var(--text2); }
+.vol-controls input[type="number"] {
+  width: 68px; padding: 5px 8px; background: var(--input-bg);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text); font-size: .85rem;
+}
+.vol-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(50px,1fr));
+  gap: 5px; max-height: 190px; overflow-y: auto; padding: 1px;
+}
+.vol-label { display: flex; flex-direction: column; align-items: center; cursor: pointer; position: relative; }
+.vol-label input { display: none; }
+.vol-chip {
+  width: 44px; height: 30px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface2);
+  display: flex; align-items: center; justify-content: center;
+  font-size: .78rem; color: var(--text2); transition: background-color .1s, border-color .1s, color .1s; user-select: none;
+}
+.vol-label input:checked ~ .vol-chip { background: var(--accent); border-color: var(--accent); color: #fff; }
+.vol-label:hover .vol-chip { border-color: var(--accent); }
+/* ISBN取得済みマーク */
+.vol-chip.has-isbn { border-color: var(--success); }
+.vol-chip.has-isbn::after { content:''; position: absolute; top: 1px; right: 1px; width: 6px; height: 6px; background: var(--success); border-radius: 50%; }
+.vol-count { font-size: .74rem; color: var(--text3); margin-top: 6px; }
+
+/* ISBN取得ステータス */
+.isbn-fetch-status {
+  margin-top: 10px; padding: 8px 10px; border-radius: var(--radius);
+  font-size: .8rem;
+}
+
+/* Toggle switch */
+.sw-wrap { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.sw { width: 36px; height: 20px; background: var(--border); border-radius: 10px; position: relative; transition: background .2s; flex-shrink: 0; }
+.sw::after { content:''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .2s; }
+input.sw-in { display: none; }
+input.sw-in:checked + .sw { background: var(--accent); }
+input.sw-in:checked + .sw::after { transform: translateX(16px); }
+.sw-label { font-size: .85rem; font-weight: 600; }
+
+/* ===== Multi-lend checklist ===== */
+.lend-vol-list {
+  display: flex; flex-direction: column; gap: 5px;
+  max-height: 220px; overflow-y: auto;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 8px; margin-top: 10px;
+}
+.lend-vol-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 7px; border-radius: 6px; cursor: pointer; transition: background .1s;
+}
+.lend-vol-item:hover { background: var(--surface2); }
+.lend-vol-item input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; flex-shrink: 0; }
+.lend-vol-item .vn { font-size: .78rem; color: var(--text3); width: 38px; flex-shrink: 0; }
+.lend-vol-item .vt { font-size: .875rem; flex: 1; }
+
+/* ===== CSV Panel ===== */
+.csv-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 14px 18px; margin-top: 18px; }
+.csv-head { display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none; }
+.csv-title { font-size: .875rem; font-weight: 600; }
+.csv-body { margin-top: 12px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.csv-hint { font-size: .75rem; color: var(--text3); }
+
+/* ===== Toast ===== */
+#toasts { position: fixed; bottom: 20px; right: 20px; z-index: 999; display: flex; flex-direction: column; gap: 6px; }
+.toast { padding: 9px 14px; border-radius: var(--radius); font-size: .85rem; font-weight: 500; max-width: 300px; animation: tin .2s ease; display: flex; align-items: center; gap: 7px; }
+[data-theme="dark"] .toast-ok   { background:#064e3b; border:1px solid var(--success); color:#6ee7b7; }
+[data-theme="dark"] .toast-err  { background:#450a0a; border:1px solid var(--danger);  color:#fca5a5; }
+[data-theme="dark"] .toast-info { background:#1e1b4b; border:1px solid var(--accent);  color:#c4b5fd; }
+[data-theme="light"] .toast-ok   { background:#d1fae5; border:1px solid var(--success); color:#065f46; }
+[data-theme="light"] .toast-err  { background:#fee2e2; border:1px solid var(--danger);  color:#991b1b; }
+[data-theme="light"] .toast-info { background:#ede9fe; border:1px solid var(--accent);  color:#4c1d95; }
+@keyframes tin { from{opacity:0;transform:translateX(14px)} to{opacity:1;transform:none} }
+
+/* ===== Empty / Loading ===== */
+.empty-state { text-align:center; padding:52px 20px; color:var(--text2); }
+.empty-state .ei { font-size:2.5rem; opacity:.3; margin-bottom:10px; }
+.empty-state h3 { font-size:.95rem; margin-bottom:4px; }
+.empty-state p { font-size:.82rem; color:var(--text3); }
+.loading-bar { position:fixed; top:0; left:0; right:0; height:3px; background:var(--accent); z-index:999; animation:lb 1.4s ease infinite; }
+@keyframes lb { 0%{width:0;opacity:1}70%{width:80%;opacity:1}100%{width:100%;opacity:0} }
+
+/* ===== 高速登録モード ===== */
+.rapid-wrap {
+  display: flex; flex-direction: column; gap: 14px;
+}
+/* カメラ部 */
+.rapid-cam {
+  position: relative; border-radius: var(--radius-lg); overflow: hidden;
+  background: #000; aspect-ratio: 4/3; max-height: 280px;
+}
+.rapid-cam video { width:100%; height:100%; object-fit:cover; display:block; }
+.rapid-cam .scanner-overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+.rapid-cam .scanner-guide { width:65%; height:40%; border:2px solid var(--accent); border-radius:6px; box-shadow:0 0 0 4000px rgba(0,0,0,.4); }
+/* ステータス */
+.rapid-status {
+  padding: 10px 14px; border-radius: var(--radius); font-size:.875rem;
+  font-weight: 600; text-align: center; min-height: 42px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+/* 書誌プレビューカード */
+.rapid-card {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 14px 16px;
+  display: none; flex-direction: column; gap: 8px;
+}
+.rapid-card.show { display: flex; }
+.rapid-card-title { font-size: 1rem; font-weight: 700; }
+.rapid-card-sub   { font-size: .82rem; color: var(--text2); }
+.rapid-card-isbn  { font-size: .75rem; color: var(--text3); font-family: monospace; }
+/* 巻数ステッパー */
+.vol-stepper {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 10px 14px;
+}
+.vol-stepper label { font-size: .82rem; color: var(--text2); font-weight: 600; flex:1; }
+.vol-step-btn {
+  width: 44px; height: 44px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--text); font-size: 1.4rem; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  transition: background-color .12s, border-color .12s, color .12s, transform .12s; user-select: none; -webkit-user-select: none;
+}
+.vol-step-btn:active { background: var(--accent); border-color: var(--accent); color:#fff; transform:scale(.94); }
+.vol-step-val {
+  font-size: 1.5rem; font-weight: 800; min-width: 48px;
+  text-align: center; color: var(--accent);
+}
+/* 登録リスト */
+.rapid-list {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); max-height: 160px; overflow-y: auto;
+}
+.rapid-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px; border-bottom: 1px solid var(--border); font-size: .82rem;
+}
+.rapid-item:last-child { border-bottom: none; }
+.rapid-item .ri-num  { color: var(--text3); width: 24px; text-align:right; flex-shrink:0; }
+.rapid-item .ri-vol  { color: var(--accent); font-weight:700; width:36px; flex-shrink:0; }
+.rapid-item .ri-isbn { color: var(--text3); font-family:monospace; font-size:.75rem; }
+.rapid-item .ri-title{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rapid-item .ri-del  { color:var(--danger); cursor:pointer; padding:2px 5px; border-radius:4px; flex-shrink:0; }
+.rapid-item .ri-del:hover { background:rgba(248,113,113,.15); }
+.rapid-item.ri-ok    { opacity:.55; }
+/* テキストISBN入力エリア */
+.text-isbn-row {
+  display: flex; gap: 6px; align-items: center;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 8px 10px;
+}
+.text-isbn-row input {
+  flex:1; background: transparent; border: none; color: var(--text);
+  font-size: .9rem; font-family: monospace;
+}
+.text-isbn-row input:focus { outline: none; }
+.text-isbn-row button { flex-shrink:0; }
+
+/* ===== Series (grouped) view ===== */
+.series-group { margin-bottom: 10px; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.series-group-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; background: var(--surface);
+  cursor: pointer; user-select: none;
+}
+.series-group-header:hover { background: var(--surface2); }
+.series-group-title { font-weight: 600; font-size: .9rem; flex: 1; }
+.series-group-meta  { font-size: .78rem; color: var(--text3); white-space: nowrap; }
+.series-group-arrow { color: var(--text3); font-size: .8rem; transition: transform .15s; }
+.series-group-arrow.open { transform: rotate(90deg); }
+.series-group-body  { display: none; }
+.series-group-body.open { display: block; }
+.series-vol-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 14px 7px 28px; border-top: 1px solid var(--border);
+  font-size: .85rem;
+}
+.series-vol-row:hover { background: var(--surface); }
+.series-vol-num { color: var(--text3); width: 38px; flex-shrink: 0; font-size: .78rem; }
+.series-vol-title { flex: 1; }
+.series-vol-actions { display: flex; gap: 4px; }
+
+/* view-mode toggle */
+.view-toggle {
+  display: flex; gap: 3px; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 3px;
+}
+.view-toggle-btn {
+  padding: 4px 10px; border-radius: 5px; border: none;
+  background: transparent; color: var(--text2); font-size: .8rem;
+  font-weight: 500; transition: background-color .12s, color .12s;
+}
+.view-toggle-btn.active { background: var(--surface); color: var(--text); }
+
+/* ===== Bulk Edit Modal ===== */
+.bulk-preview {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px 12px;
+  font-size: .82rem; color: var(--text2); max-height: 160px; overflow-y: auto;
+}
+.bulk-preview-item { padding: 3px 0; border-bottom: 1px solid var(--border); }
+.bulk-preview-item:last-child { border-bottom: none; }
+
+/* ===== Publisher view ===== */
+.pub-group { margin-bottom: 10px; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.pub-group-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; background: var(--surface);
+  cursor: pointer; user-select: none;
+}
+.pub-group-header:hover { background: var(--surface2); }
+.pub-group-name { font-weight: 600; font-size: .9rem; flex: 1; }
+.pub-group-meta { font-size: .78rem; color: var(--text3); white-space: nowrap; }
+.pub-group-arrow { color: var(--text3); font-size: .8rem; transition: transform .15s; }
+.pub-group-arrow.open { transform: rotate(90deg); }
+.pub-group-body { display: none; }
+.pub-group-body.open { display: block; }
+.pub-title-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px 8px 28px; border-top: 1px solid var(--border);
+  font-size: .85rem;
+}
+.pub-title-row:hover { background: var(--surface); }
+.pub-title-name  { flex: 1; font-weight: 500; }
+.pub-title-vols  { font-size: .78rem; color: var(--text3); white-space: nowrap; }
+.pub-title-type  { flex-shrink: 0; }
+
+/* ===== 先頭に戻るボタン ===== */
+.back-to-top {
+  display: flex; justify-content: center; padding: 18px 0 6px;
+}
+.back-to-top-btn {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 20px; padding: 8px 22px; font-size: .82rem;
+  color: var(--text2); transition: background-color .15s, border-color .15s, color .15s;
+}
+.back-to-top-btn:hover { background: var(--surface); color: var(--accent); border-color: var(--accent); }
+
+/* ===== Responsive ===== */
+@media(max-width:768px){
+  header { padding:0 12px; gap:8px; }
+  .header-search { max-width:none; }
+  main { padding:12px; }
+  .form-grid { grid-template-columns:1fr; }
+  .form-grid .span2 { grid-column:span 1; }
+  table { font-size:.8rem; }
+  tbody td { padding:8px 10px; }
+}
+@media(max-width:480px){
+  .header-logo { font-size:.9rem; }
+  .type-tab { padding:6px 8px; font-size:.78rem; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+<div class="loading-bar" id="lbar" style="display:none"></div>
+
+<!-- Header -->
+<header>
+  <div class="header-logo">📚 <span>蔵書</span>管理</div>
+  <div class="header-search">
+    <span class="icon">🔍</span>
+    <input type="text" id="q" placeholder="タイトル・著者・ISBNで検索…" oninput="onSearch()">
+  </div>
+  <div class="header-right">
+    <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" title="テーマ切替">🌙</button>
+    <button class="btn btn-secondary" onclick="openRapid()" title="高速連続登録">⚡ 高速登録</button>
+    <button class="btn btn-primary" onclick="openAdd()">＋ 登録</button>
+  </div>
+</header>
+
+<!-- Main -->
+<main>
+  <!-- Type Tabs -->
+  <div class="type-tabs">
+    <button class="type-tab active" data-type="all"      onclick="switchTab('all')">すべて <span class="cnt" id="c-all">0</span></button>
+    <button class="type-tab"        data-type="manga"    onclick="switchTab('manga')">漫画 <span class="cnt" id="c-manga">0</span></button>
+    <button class="type-tab"        data-type="book"     onclick="switchTab('book')">書籍 <span class="cnt" id="c-book">0</span></button>
+    <button class="type-tab"        data-type="magazine" onclick="switchTab('magazine')">雑誌 <span class="cnt" id="c-magazine">0</span></button>
+    <button class="type-tab"        data-type="other"    onclick="switchTab('other')">その他 <span class="cnt" id="c-other">0</span></button>
+  </div>
+
+  <!-- Filter Bar -->
+  <div class="filter-bar">
+    <select id="f-status" onchange="applyFilters()">
+      <option value="">状態：すべて</option>
+      <option value="available">在庫</option>
+      <option value="lending">貸出中</option>
+      <option value="lost">紛失</option>
+      <option value="disposed">廃棄</option>
+    </select>
+    <select id="f-sort" onchange="applyFilters()">
+      <option value="id_asc">タイトル・巻数順（昇順）</option>
+      <option value="id_desc">タイトル・巻数順（降順）</option>
+      <option value="created_desc" selected>登録順（新しい順）</option>
+      <option value="created_asc">登録順（古い順）</option>
+      <option value="count_desc">冊数順（多い順）</option>
+      <option value="count_asc">冊数順（少ない順）</option>
+    </select>
+    <div class="view-toggle">
+      <button class="view-toggle-btn active" id="vt-list"      onclick="switchView('list')">☰ 一覧</button>
+      <button class="view-toggle-btn"        id="vt-series"    onclick="switchView('series')">📚 シリーズ</button>
+      <button class="view-toggle-btn"        id="vt-publisher" onclick="switchView('publisher')">🏢 出版社</button>
+    </div>
+    <div class="filter-spacer"></div>
+    <span id="total-label" style="font-size:.82rem;color:var(--text3)"></span>
+  </div>
+
+  <!-- Table -->
+  <div class="table-wrap" id="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>種別</th>
+          <th>タイトル</th>
+          <th>著者</th>
+          <th>巻</th>
+          <th>出版社</th>
+          <th>状態</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div id="empty" class="empty-state" style="display:none">
+      <div class="ei">📭</div>
+      <h3>蔵書がありません</h3>
+      <p>「＋ 登録」ボタンから追加してください</p>
+    </div>
+  </div>
+
+  <!-- Series grouped view -->
+  <div id="series-view" style="display:none"></div>
+
+  <!-- Publisher grouped view -->
+  <div id="publisher-view" style="display:none"></div>
+
+  <!-- Pagination -->
+  <div class="pagination" id="pgn"></div>
+
+  <!-- CSV Panel -->
+  <div class="csv-panel">
+    <div class="csv-head" onclick="toggleCsv()">
+      <span class="csv-title">📄 CSVインポート／エクスポート</span>
+      <span id="csv-chev">▼</span>
+    </div>
+    <div class="csv-body" id="csv-body" style="display:none">
+      <button class="btn btn-secondary" onclick="exportCSV()">⬇ エクスポート</button>
+      <label class="btn btn-secondary" style="cursor:pointer">
+        ⬆ インポート
+        <input type="file" accept=".csv" id="csv-file" style="display:none" onchange="importCSV(this)">
+      </label>
+      <div class="csv-hint">列順：id, type, title, author, isbn, series_id, volume, publisher, published_date, memo, status, borrower, borrow_date</div>
+    </div>
+  </div>
+</main>
+<div id="toasts"></div>
+
+<!-- ========== Modal: Add/Edit ========== -->
+<div class="modal-overlay" id="m-book" onclick="overlayClose(event,'m-book')">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="m-title">蔵書を登録</span>
+      <button class="btn-icon" onclick="closeM('m-book')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="f-id">
+      <input type="hidden" id="f-sid">
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label>種別 *</label>
+          <select id="f-type" onchange="onTypeChange()">
+            <option value="manga">漫画</option>
+            <option value="book">書籍</option>
+            <option value="magazine">雑誌</option>
+            <option value="other">その他</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>状態 *</label>
+          <select id="f-status2">
+            <option value="available">在庫</option>
+            <option value="lending">貸出中</option>
+            <option value="lost">紛失</option>
+            <option value="disposed">廃棄</option>
+          </select>
+        </div>
+
+        <div class="form-group span2">
+          <label>タイトル *</label>
+          <input type="text" id="f-title" placeholder="例：鬼滅の刃" maxlength="200" oninput="updateTitleStripHint()">
+          <div id="title-strip-hint" style="display:none; font-size:.76rem; padding:5px 8px; background:rgba(124,106,247,.1); border-radius:5px; color:var(--accent)"></div>
+        </div>
+        <div class="form-group span2">
+          <label>著者</label>
+          <input type="text" id="f-author" placeholder="例：吾峠呼世晴" maxlength="100">
+        </div>
+
+        <!-- ISBN + スキャンボタン -->
+        <div class="form-group span2">
+          <label>ISBN</label>
+          <div class="isbn-row">
+            <input type="text" id="f-isbn" placeholder="例：9784088812342 または ISBN978-4-08-881234-2" maxlength="20"
+              oninput="onIsbnInput(this)">
+            <button class="isbn-scan-btn" onclick="openScanner('single')" type="button">📷 スキャン</button>
+            <label class="isbn-scan-btn" style="cursor:pointer" title="画像から読取">
+              🖼
+              <input type="file" id="isbn-img-single" accept="image/*" style="display:none" onchange="scanFromImage(this,'single')">
+            </label>
+          </div>
+          <div class="form-hint">
+            ハイフン区切り・「ISBN」プレフィックス付きもそのまま入力OK。バーコード非掲載の場合はそのまま手打ちしてください。
+          </div>
+        </div>
+
+        <div class="form-group" id="vg" style="display:none">
+          <label>巻数</label>
+          <input type="number" id="f-vol" min="1" max="9999" placeholder="例：1">
+        </div>
+
+        <!-- 書誌情報（自動取得または手入力） -->
+        <div class="form-group">
+          <label>出版社 <span class="badge badge-api">自動取得</span></label>
+          <input type="text" id="f-publisher" placeholder="（ISBN取得後に自動入力）" maxlength="100">
+        </div>
+        <div class="form-group">
+          <label>発売日 <span class="badge badge-api">自動取得</span></label>
+          <input type="text" id="f-pubdate" placeholder="例：202301" maxlength="8">
+        </div>
+
+        <div class="form-group span2">
+          <label>メモ</label>
+          <textarea id="f-memo" placeholder="任意のメモ" maxlength="500"></textarea>
+        </div>
+      </div>
+
+      <!-- カメラスキャナー UI（単冊用） -->
+      <div id="scanner-single" style="display:none; margin-top:12px">
+        <div class="scanner-wrap">
+          <div class="scanner-tabs">
+            <button class="sc-tab active" onclick="switchScanTab('camera','single')">📷 カメラ</button>
+            <button class="sc-tab" onclick="switchScanTab('image','single')">🖼 画像</button>
+          </div>
+          <div id="scan-camera-single">
+            <div id="scanner-video-wrap">
+              <video id="scanner-video" autoplay playsinline muted></video>
+              <div class="scanner-overlay"><div class="scanner-guide"></div></div>
+            </div>
+          </div>
+          <div id="scan-image-single" style="display:none">
+            <div id="img-drop-zone" onclick="document.getElementById('isbn-img-file').click()"
+                 ondragover="event.preventDefault();this.classList.add('drag-over')"
+                 ondragleave="this.classList.remove('drag-over')"
+                 ondrop="handleImgDrop(event,'single')">
+              📸 クリックまたはドラッグで画像を選択
+              <input type="file" id="isbn-img-file" accept="image/*" style="display:none" onchange="scanFromImage(this,'single')">
+            </div>
+            <img id="img-preview" alt="">
+          </div>
+          <div class="scanner-status ss-idle" id="scan-status-single">📡 スキャン待機中…</div>
+          <div style="margin-top:8px;display:flex;gap:8px">
+            <button class="btn btn-secondary btn-sm" onclick="stopScanner()">停止</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- シリーズ一括登録（漫画・新規のみ） -->
+      <div id="series-wrap" style="display:none; margin-top:14px">
+        <label class="sw-wrap">
+          <input type="checkbox" class="sw-in" id="f-series" onchange="onSeriesToggle()">
+          <span class="sw"></span>
+          <span class="sw-label">シリーズ一括登録（複数巻をまとめて追加）</span>
+        </label>
+        <div id="vol-picker" style="display:none; margin-top:10px">
+          <div class="series-box">
+            <div class="series-box-title">📚 所有している巻を選択</div>
+            <div class="vol-controls">
+              <label>最終巻：</label>
+              <input type="number" id="f-maxvol" min="1" max="500" value="1" oninput="buildVolPicker()">
+              <button class="btn btn-secondary btn-sm" onclick="volAll(true)">全選択</button>
+              <button class="btn btn-secondary btn-sm" onclick="volAll(false)">全解除</button>
+              <button class="btn btn-secondary btn-sm" id="isbn-fetch-btn" onclick="fetchAllIsbns()" style="margin-left:auto">
+                🔍 ISBN一括取得
+              </button>
+            </div>
+            <div class="vol-grid" id="vol-grid"></div>
+            <div class="vol-count" id="vol-count">0巻選択中</div>
+            <div class="isbn-fetch-status" id="isbn-fetch-status" style="display:none"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeM('m-book')">キャンセル</button>
+      <button class="btn btn-primary" id="save-btn" onclick="saveBook()">登録</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== Modal: Lend ========== -->
+<div class="modal-overlay" id="m-lend" onclick="overlayClose(event,'m-lend')">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <span class="modal-title" id="lend-title">貸出登録</span>
+      <button class="btn-icon" onclick="closeM('m-lend')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="lend-id">
+      <div class="form-grid">
+        <div class="form-group span2">
+          <label>借用者名 *</label>
+          <input type="text" id="f-borrower" placeholder="例：山田太郎" maxlength="50">
+        </div>
+        <div class="form-group span2">
+          <label>貸出日</label>
+          <input type="date" id="f-bdate">
+        </div>
+      </div>
+      <div id="lend-series-wrap" style="display:none; margin-top:14px">
+        <div style="font-size:.82rem;font-weight:600;color:var(--text2);margin-bottom:6px">
+          📚 同シリーズの他の巻もまとめて貸出できます
+        </div>
+        <div class="lend-vol-list" id="lend-vol-list"></div>
+        <div style="font-size:.76rem;color:var(--text3);margin-top:5px" id="lend-vol-hint"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeM('m-lend')">キャンセル</button>
+      <button class="btn btn-primary" onclick="saveLend()">貸出登録</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== Modal: Rapid Bulk ========== -->
+<div class="modal-overlay" id="m-rapid" onclick="overlayClose(event,'m-rapid')">
+  <div class="modal" style="max-width:540px">
+    <div class="modal-header">
+      <span class="modal-title">⚡ 高速一括登録</span>
+      <button class="btn-icon" onclick="closeRapid()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;flex-direction:column;gap:14px">
+
+        <!-- ① スキャナー（任意の1巻をスキャン → タイトル・著者・出版社を自動補完） -->
+        <div class="scanner-wrap" style="margin-bottom:2px">
+          <div style="font-size:.78rem;font-weight:600;color:var(--text2);margin-bottom:8px">
+            📷 STEP 1：任意の1冊をスキャンして書誌情報を自動入力（省略可）
+          </div>
+          <div class="scanner-tabs">
+            <button class="sc-tab active" id="rp-sc-tab-cam" onclick="rpSwitchScanTab('camera')">📷 カメラ</button>
+            <button class="sc-tab"        id="rp-sc-tab-img" onclick="rpSwitchScanTab('image')">🖼 画像</button>
+            <button class="sc-tab"        id="rp-sc-tab-txt" onclick="rpSwitchScanTab('text')">⌨️ 手打ち</button>
+          </div>
+
+          <!-- カメラ -->
+          <div id="rp-scan-camera">
+            <div id="rp-scanner-video-wrap" style="position:relative;border-radius:6px;overflow:hidden;background:#000;max-height:220px">
+              <video id="rp-video" autoplay playsinline muted style="width:100%;max-height:220px;object-fit:cover;display:block"></video>
+              <div class="scanner-overlay"><div class="scanner-guide"></div></div>
+            </div>
+          </div>
+
+          <!-- 画像 -->
+          <div id="rp-scan-image" style="display:none">
+            <div id="rp-img-drop" onclick="document.getElementById('rp-img-file').click()"
+                 style="border:2px dashed var(--border);border-radius:var(--radius);padding:22px;text-align:center;color:var(--text3);font-size:.85rem;cursor:pointer"
+                 ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+                 ondragleave="this.style.borderColor='var(--border)'"
+                 ondrop="rpHandleImgDrop(event)">
+              📸 クリックまたはドラッグで画像を選択
+              <input type="file" id="rp-img-file" accept="image/*" style="display:none" onchange="rpScanFromImage(this)">
+            </div>
+            <img id="rp-img-preview" style="display:none;width:100%;border-radius:6px;margin-top:6px" alt="">
+          </div>
+
+          <!-- 手打ち -->
+          <div id="rp-scan-text" style="display:none">
+            <div class="text-isbn-row">
+              <input type="text" id="rp-text-isbn" placeholder="ISBN978-4-06-514209-7 または 9784065142097">
+              <button class="btn btn-secondary btn-sm" onclick="rpConfirmTextIsbn()">確定・取得</button>
+            </div>
+            <div style="font-size:.74rem;color:var(--text3);margin-top:4px">
+              ハイフン・ISBNプレフィックス付きのままOKです
+            </div>
+          </div>
+
+          <div class="scanner-status ss-scan" id="rp-scan-status" style="margin-top:8px">📡 スキャン中…バーコードをガイド枠に合わせてください</div>
+        </div>
+
+        <!-- ② タイトル・著者・種別 -->
+        <div style="font-size:.78rem;font-weight:600;color:var(--text2);margin-bottom:-6px">
+          📝 STEP 2：タイトル・著者を確認／入力して巻を選択
+        </div>
+
+        <!-- タイトル・著者・種別 -->
+        <div class="form-grid" style="gap:10px">
+          <div class="form-group span2">
+            <label>シリーズタイトル *</label>
+            <input type="text" id="rp-title" placeholder="例：鬼滅の刃" maxlength="200" oninput="rpTitleChange()">
+            <div id="rp-title-hint" style="display:none;font-size:.74rem;padding:4px 8px;background:rgba(124,106,247,.1);border-radius:5px;color:var(--accent);margin-top:3px"></div>
+          </div>
+          <div class="form-group">
+            <label>著者</label>
+            <input type="text" id="rp-author" placeholder="例：吾峠呼世晴" maxlength="100">
+          </div>
+          <div class="form-group">
+            <label>種別</label>
+            <select id="rp-type">
+              <option value="manga">漫画</option>
+              <option value="book">書籍</option>
+              <option value="other">その他</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 巻ピッカー -->
+        <div class="series-box">
+          <div class="series-box-title">📚 所有している巻を選択</div>
+          <div class="vol-controls">
+            <label>最終巻：</label>
+            <button class="vol-step-btn" style="width:36px;height:36px;font-size:1.1rem" onclick="rpMaxVolStep(-1)">－</button>
+            <div class="vol-step-val" id="rp-maxvol-val" style="font-size:1.2rem;min-width:40px">1</div>
+            <button class="vol-step-btn" style="width:36px;height:36px;font-size:1.1rem" onclick="rpMaxVolStep(+1)">＋</button>
+            <input type="hidden" id="rp-maxvol" value="1">
+            <button class="btn btn-secondary btn-sm" onclick="rpVolAll(true)">全選択</button>
+            <button class="btn btn-secondary btn-sm" onclick="rpVolAll(false)">全解除</button>
+            <button class="btn btn-secondary btn-sm" id="rp-isbn-btn" onclick="rpFetchAllIsbns()" style="margin-left:auto">
+              🔍 ISBN一括取得
+            </button>
+          </div>
+          <div class="vol-grid" id="rp-vol-grid"></div>
+          <div class="vol-count" id="rp-vol-count">0巻選択中</div>
+          <div class="isbn-fetch-status" id="rp-isbn-status" style="display:none"></div>
+        </div>
+
+        <!-- 出版社・発売日（自動取得後に表示） -->
+        <div class="form-grid" style="gap:10px">
+          <div class="form-group">
+            <label>出版社 <span class="badge badge-api">自動取得</span></label>
+            <input type="text" id="rp-publisher" placeholder="（ISBN取得後に自動入力）" maxlength="100">
+          </div>
+          <div class="form-group">
+            <label>発売日 <span class="badge badge-api">自動取得</span></label>
+            <input type="text" id="rp-pubdate" placeholder="例：202301" maxlength="8">
+          </div>
+        </div>
+
+        <!-- メモ -->
+        <div class="form-group">
+          <label>メモ（全巻共通）</label>
+          <input type="text" id="rp-memo" placeholder="任意のメモ" maxlength="500">
+        </div>
+
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeRapid()">キャンセル</button>
+      <button class="btn btn-primary" onclick="rpSaveAll()">✅ 一括登録</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== Modal: Bulk Edit ========== -->
+<div class="modal-overlay" id="m-bulk" onclick="overlayClose(event,'m-bulk')">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <span class="modal-title">✏️ シリーズ一括編集</span>
+      <button class="btn-icon" onclick="closeM('m-bulk')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="bulk-key"> <!-- title or series_id -->
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="font-size:.8rem;color:var(--text2)">
+          以下のフィールドを入力した場合のみ、対象の全巻に上書きされます。空欄のフィールドは変更されません。
+        </div>
+        <div class="form-group">
+          <label>新しいタイトル <span style="color:var(--text3);font-size:.74rem">（空欄＝変更なし）</span></label>
+          <input type="text" id="bulk-title" placeholder="例：鬼滅の刃" maxlength="200">
+        </div>
+        <div class="form-group">
+          <label>新しい著者名 <span style="color:var(--text3);font-size:.74rem">（空欄＝変更なし）</span></label>
+          <input type="text" id="bulk-author" placeholder="例：吾峠呼世晴" maxlength="100">
+        </div>
+        <div class="form-group">
+          <label>新しい出版社 <span style="color:var(--text3);font-size:.74rem">（空欄＝変更なし）</span></label>
+          <input type="text" id="bulk-publisher" placeholder="例：芳文社" maxlength="100">
+        </div>
+        <div style="font-size:.78rem;font-weight:600;color:var(--text2)">対象 <span id="bulk-count">0</span> 冊</div>
+        <div class="bulk-preview" id="bulk-preview"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeM('m-bulk')">キャンセル</button>
+      <button class="btn btn-primary" onclick="saveBulkEdit()">一括更新</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== Modal: Confirm ========== -->
+<div class="modal-overlay" id="m-confirm" onclick="overlayClose(event,'m-confirm')">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <span class="modal-title">削除の確認</span>
+      <button class="btn-icon" onclick="closeM('m-confirm')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p id="confirm-msg" style="color:var(--text2);line-height:1.7"></p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeM('m-confirm')">キャンセル</button>
+      <button class="btn btn-danger" id="confirm-ok">削除</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== JavaScript ========== -->
+<script>
+// ============================================================
+// IndexedDB  (DB_NAME v3 に更新してスキーマ追加)
+// ============================================================
+const DB_NAME = 'LibraryDB_v3', DB_VER = 1, STORE = 'books';
+let db = null;
+
+function initDB() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(DB_NAME, DB_VER);
+    r.onupgradeneeded = e => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains(STORE)) {
+        const s = d.createObjectStore(STORE, { keyPath: 'id' });
+        ['type','status','series_id'].forEach(k => s.createIndex(k, k, { unique: false }));
+      }
+    };
+    r.onsuccess = e => { db = e.target.result; res(); };
+    r.onerror   = () => rej(r.error);
+  });
+}
+const txStore = (m='readonly') => db.transaction(STORE, m).objectStore(STORE);
+const dbAll  = () => new Promise((r,e) => { const q=txStore().getAll(); q.onsuccess=()=>r(q.result); q.onerror=()=>e(q.error); });
+const dbPut  = b  => new Promise((r,e) => { const q=txStore('readwrite').put(b); q.onsuccess=r; q.onerror=()=>e(q.error); });
+const dbDel  = id => new Promise((r,e) => { const q=txStore('readwrite').delete(id); q.onsuccess=r; q.onerror=()=>e(q.error); });
+function dbPutMany(books) {
+  return new Promise((r, e) => {
+    const t = db.transaction(STORE, 'readwrite');
+    const s = t.objectStore(STORE);
+    books.forEach(b => s.put(b));
+    t.oncomplete = r; t.onerror = () => e(t.error);
+  });
+}
+
+// ============================================================
+// ID Strategy: 著者__タイトル__0001
+// ============================================================
+function makeId(author, title, volume, type) {
+  const san = s => String(s||'').toLowerCase()
+    .replace(/\s+/g,'_').replace(/[^\p{L}\p{N}_]/gu,'').slice(0,40);
+  const a = san(author) || 'unknown';
+  const t = san(title)  || 'untitled';
+  if (type === 'manga' && volume) return `${a}__${t}__${String(volume).padStart(4,'0')}`;
+  return `${a}__${t}__${Date.now().toString(36)}`;
+}
+
+// ============================================================
+// タイトル末尾の巻数表記を検出・除去
+// 対応: 半角アラビア数字 / 全角アラビア数字 / 漢数字（旧字体含む）
+// 例: "鬼滅の刃 23"     → { base:"鬼滅の刃",   detected:"23" }
+//     "進撃の巨人 第23巻" → { base:"進撃の巨人", detected:"23" }
+//     "ワンピース１０００" → { base:"ワンピース", detected:"1000" }
+//     "進撃の巨人二十三"  → { base:"進撃の巨人", detected:"二十三" }
+// ============================================================
+function stripTrailingVolume(title) {
+  if (!title) return { base: title, detected: null };
+
+  // 全角数字→半角に正規化
+  const normalize = s => s.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+
+  // パターン1: 末尾に半角/全角アラビア数字（「第X巻」「X巻」形式も含む）
+  const reArabic = /^(.*?)[\s　]*第?[\s　]*([０-９\d]+)[\s　]*[巻号冊]?[\s　]*$/u;
+  const mA = title.match(reArabic);
+  if (mA && mA[1].trim().length > 0) {
+    return { base: mA[1].trim(), detected: normalize(mA[2]) };
+  }
+
+  // パターン2: 末尾に漢数字（旧字体含む）
+  const kanjiNum = '[〇一二三四五六七八九十拾百千万壱弐参肆伍陸柒捌玖壹貳參]+';
+  const reKanji  = new RegExp(`^(.*?)[\\s　]*第?[\\s　]*(${kanjiNum})[\\s　]*[巻号冊]?[\\s　]*$`, 'u');
+  const mK = title.match(reKanji);
+  if (mK && mK[1].trim().length > 0) {
+    return { base: mK[1].trim(), detected: mK[2] };
+  }
+
+  return { base: title, detected: null };
+}
+
+// ============================================================
+// テキストクリーニング
+// cleanTitle : 末尾のドット（半角・全角・中黒）を除去
+// cleanAuthor: 氏名間のコンマ（半角・全角）を除去
+// ============================================================
+function cleanTitle(s) {
+  return String(s || '').replace(/[.．｡。・]+$/u, '').trim();
+}
+function cleanAuthor(s) {
+  return String(s || '').replace(/[,，、]+/gu, '').trim();
+}
+
+// ============================================================
+// State
+// ============================================================
+let allBooks = [], filtered = [], currentTab = 'all', page = 1;
+const PER = 50;
+
+// ============================================================
+// Utilities
+// ============================================================
+const today  = () => new Date().toISOString().slice(0,10);
+const nowISO = () => new Date().toISOString();
+const esc    = s  => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const TYPE_LBL   = { manga:'漫画', book:'書籍', magazine:'雑誌', other:'その他' };
+const STATUS_LBL = { available:'在庫', lending:'貸出中', lost:'紛失', disposed:'廃棄' };
+const typeBadge   = t => `<span class="badge bt-${t}">${TYPE_LBL[t]||t}</span>`;
+const statusBadge = s => `<span class="badge bs-${s}">${STATUS_LBL[s]||s}</span>`;
+
+function toast(msg, type='info') {
+  const icon = {ok:'✅',err:'❌',info:'ℹ️'}[type]||'';
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.textContent = icon + ' ' + msg;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+function showLoad(v) { document.getElementById('lbar').style.display = v ? 'block' : 'none'; }
+
+// ============================================================
+// Theme
+// ============================================================
+function toggleTheme() {
+  const html = document.documentElement;
+  const isDark = html.dataset.theme === 'dark';
+  html.dataset.theme = isDark ? 'light' : 'dark';
+  document.getElementById('theme-btn').textContent = isDark ? '☀️' : '🌙';
+  localStorage.setItem('lib_theme', html.dataset.theme);
+}
+function initTheme() {
+  const saved = localStorage.getItem('lib_theme') || 'dark';
+  document.documentElement.dataset.theme = saved;
+  document.getElementById('theme-btn').textContent = saved === 'dark' ? '🌙' : '☀️';
+}
+
+// ============================================================
+// ISBN 正規化
+// 入力例:
+//   "ISBN978-4-06-514209-7" → "9784065142097"
+//   "978-4-08-881234-2"     → "9784088812342"
+//   "9784088812342"         → "9784088812342"  (そのまま)
+// ============================================================
+function normalizeISBN(raw) {
+  if (!raw) return '';
+  // ISBNプレフィックスとハイフン・スペースを除去
+  return raw.replace(/^ISBN[-\s]*/i, '').replace(/[-\s]/g, '');
+}
+
+// ISBN入力フィールドのリアルタイム正規化
+// 13桁になったタイミングで自動的に書誌取得を試みる
+async function onIsbnInput(el) {
+  const clean = normalizeISBN(el.value);
+  if (clean.length === 13 && /^97[89]\d{10}$/.test(clean)) {
+    el.value = clean;
+    await autoFillBiblioSingle(clean);
+  }
+}
+
+// ============================================================
+// 高速一括登録モード
+// ============================================================
+let rpFetchedIsbns = {};
+let rpCodeReader   = null;
+let rpStatusLocked = false; // タイトル確定後はステータスを固定
+
+function openRapid() {
+  rpFetchedIsbns = {};
+  rpStatusLocked = false;
+  document.getElementById('rp-title').value     = '';
+  document.getElementById('rp-author').value    = '';
+  document.getElementById('rp-publisher').value = '';
+  document.getElementById('rp-pubdate').value   = '';
+  document.getElementById('rp-memo').value      = '';
+  document.getElementById('rp-text-isbn').value = '';
+  document.getElementById('rp-title-hint').style.display  = 'none';
+  document.getElementById('rp-isbn-status').style.display = 'none';
+  document.getElementById('rp-img-preview').style.display = 'none';
+  document.getElementById('rp-maxvol').value = '1';
+  document.getElementById('rp-maxvol-val').textContent = '1';
+  rpBuildVolPicker();
+  rpSwitchScanTab('camera');
+  openM('m-rapid');
+  rpStartScanner();
+}
+
+function closeRapid() {
+  rpStopScanner();
+  closeM('m-rapid');
+}
+
+// --- スキャナー制御 ---
+async function rpStartScanner() {
+  if (location.protocol === 'file:') {
+    rpSetStatus('warn', '⚠️ file://ではカメラ不可。「画像」または「手打ち」タブを使ってください。');
+    return;
+  }
+  try {
+    rpStopScanner();
+    rpSetStatus('scan', '📡 カメラを起動中…');
+    await loadZXing();
+    rpCodeReader = new ZXing.BrowserMultiFormatReader();
+    const video       = document.getElementById('rp-video');
+    const constraints = { video: { facingMode: { ideal: 'environment' }, width:{ideal:640}, height:{ideal:480} } };
+    rpSetStatus('scan', '📡 スキャン中…バーコードをガイド枠に合わせてください');
+    await rpCodeReader.decodeFromConstraints(constraints, video, async (result) => {
+      if (!result) return;
+      const text = result.getText();
+      if (!/^97[89]\d{10}$/.test(text)) return;
+      rpStopScanner();
+      await rpHandleIsbn(text);
+    });
+  } catch(e) {
+    const msg = e.name === 'NotAllowedError'
+      ? 'カメラが拒否されました。「画像」または「手打ち」タブを使ってください。'
+      : `カメラエラー: ${e.message}`;
+    rpSetStatus('err', '❌ ' + msg);
+  }
+}
+
+function rpStopScanner() {
+  if (rpCodeReader) { try { rpCodeReader.reset(); } catch {} rpCodeReader = null; }
+}
+
+async function rpScanFromImage(input) {
+  const file = input.files[0]; if (!file) return;
+  const preview = document.getElementById('rp-img-preview');
+  preview.src = URL.createObjectURL(file); preview.style.display = 'block';
+  rpSetStatus('scan', '🔍 画像を解析中…');
+  try {
+    await loadZXing();
+    const reader = new ZXing.BrowserMultiFormatReader();
+    const img = new Image();
+    img.src = URL.createObjectURL(file);
+    await new Promise(r => img.onload = r);
+    const result = await reader.decodeFromImageElement(img);
+    const text = result.getText();
+    if (/^97[89]\d{10}$/.test(text)) {
+      await rpHandleIsbn(text);
+    } else {
+      rpSetStatus('warn', `⚠️ ISBN以外のバーコードを検出: ${text}`);
+    }
+  } catch {
+    rpSetStatus('err', '❌ バーコードを検出できませんでした。別の画像か手打ちをお試しください。');
+  }
+  input.value = '';
+}
+
+function rpHandleImgDrop(e) {
+  e.preventDefault();
+  e.currentTarget.style.borderColor = 'var(--border)';
+  const file = e.dataTransfer.files[0]; if (!file) return;
+  const dt = new DataTransfer(); dt.items.add(file);
+  document.getElementById('rp-img-file').files = dt.files;
+  rpScanFromImage(document.getElementById('rp-img-file'));
+}
+
+async function rpConfirmTextIsbn() {
+  const clean = normalizeISBN(document.getElementById('rp-text-isbn').value);
+  if (!/^97[89]\d{10}$/.test(clean)) {
+    rpSetStatus('err', '❌ 有効なISBN-13（13桁・978または979始まり）を入力してください');
+    return;
+  }
+  await rpHandleIsbn(clean);
+}
+
+async function rpHandleIsbn(isbn) {
+  // タイトルが既に入力済みなら書誌の上書きをスキップ（重複スキャン対策）
+  const titleAlreadySet = !!document.getElementById('rp-title').value.trim();
+  if (titleAlreadySet) {
+    rpStatusLocked = true;
+    return;
+  }
+
+  rpSetStatus('scan', `📚 書誌情報を取得中… (${isbn})`);
+  const info = await fetchOpenBD(isbn);
+  if (info) {
+    if (info.title && !document.getElementById('rp-title').value.trim()) {
+      const { base } = stripTrailingVolume(info.title);
+      document.getElementById('rp-title').value = base;
+      rpTitleChange();
+    }
+    if (info.author    && !document.getElementById('rp-author').value.trim())
+      document.getElementById('rp-author').value = info.author;
+    if (info.publisher && !document.getElementById('rp-publisher').value)
+      document.getElementById('rp-publisher').value = info.publisher;
+    if (info.published_date && !document.getElementById('rp-pubdate').value)
+      document.getElementById('rp-pubdate').value = info.published_date;
+    rpStatusLocked = true; // 取得成功後はステータスを固定
+    rpSetStatus('ok', `✅ 書誌情報を取得しました（${info.publisher || isbn}）。巻数を選択して登録してください。`);
+  } else {
+    rpSetStatus('warn', `⚠️ 書誌情報を取得できませんでした（${isbn}）。タイトルを手入力してください。`);
+  }
+}
+
+function rpSwitchScanTab(tab) {
+  const tabIdMap = { camera: 'cam', image: 'img', text: 'txt' };
+  ['camera','image','text'].forEach(t => {
+    document.getElementById(`rp-scan-${t}`).style.display = t === tab ? 'block' : 'none';
+    document.getElementById(`rp-sc-tab-${tabIdMap[t]}`).classList.toggle('active', t === tab);
+  });
+  if (tab === 'camera') {
+    rpStartScanner();
+  } else {
+    rpStopScanner();
+    if (tab === 'text')  rpSetStatus('idle', '⌨️ ISBNを入力して「確定・取得」を押してください');
+    if (tab === 'image') rpSetStatus('idle', '🖼 画像ファイルを選択またはドラッグしてください');
+  }
+}
+
+function rpSetStatus(type, msg) {
+  // タイトルが確定済みの場合、スキャン経過メッセージは上書きしない
+  // ok / warn / err は常に表示（重要な結果なので）
+  if (rpStatusLocked && (type === 'scan' || type === 'idle')) return;
+  const el = document.getElementById('rp-scan-status');
+  el.className = `scanner-status ss-${type}`;
+  el.textContent = msg;
+}
+
+function rpTitleChange() {
+  // タイトルを手動変更したらステータスロックを解除（再スキャン可能にする）
+  rpStatusLocked = false;
+  const raw  = document.getElementById('rp-title').value.trim();
+  const hint = document.getElementById('rp-title-hint');
+  if (!raw) { hint.style.display = 'none'; return; }
+  const { base, detected } = stripTrailingVolume(raw);
+  if (detected) {
+    hint.style.display = 'block';
+    hint.textContent = `💡 末尾の「${detected}」を除去して「${base}」として登録します`;
+  } else {
+    hint.style.display = 'none';
+  }
+  // タイトルが変わったらISBN取得結果をリセット
+  rpFetchedIsbns = {};
+  document.getElementById('rp-isbn-status').style.display = 'none';
+  document.querySelectorAll('#rp-vol-grid .vol-chip').forEach(c => c.classList.remove('has-isbn'));
+}
+
+function rpMaxVolStep(d) {
+  const hidden = document.getElementById('rp-maxvol');
+  const val    = Math.max(1, Math.min(500, (parseInt(hidden.value) || 1) + d));
+  hidden.value = val;
+  document.getElementById('rp-maxvol-val').textContent = val;
+  rpBuildVolPicker();
+}
+
+function rpBuildVolPicker() {
+  const max  = Math.min(parseInt(document.getElementById('rp-maxvol').value) || 1, 500);
+  const grid = document.getElementById('rp-vol-grid');
+  grid.innerHTML = '';
+  for (let i = 1; i <= max; i++) {
+    const lbl = document.createElement('label');
+    lbl.className = 'vol-label';
+    lbl.innerHTML = `<input type="checkbox" name="rp-vol" value="${i}" checked><span class="vol-chip">${i}</span>`;
+    grid.appendChild(lbl);
+  }
+  rpUpdVolCount();
+  grid.addEventListener('change', rpUpdVolCount);
+  rpFetchedIsbns = {};
+  document.getElementById('rp-isbn-status').style.display = 'none';
+}
+
+function rpUpdVolCount() {
+  const n = document.querySelectorAll('#rp-vol-grid input:checked').length;
+  document.getElementById('rp-vol-count').textContent = `${n}巻選択中`;
+}
+
+function rpVolAll(v) {
+  document.querySelectorAll('#rp-vol-grid input').forEach(el => el.checked = v);
+  rpUpdVolCount();
+}
+
+async function rpFetchAllIsbns() {
+  const rawTitle = document.getElementById('rp-title').value.trim();
+  const author   = document.getElementById('rp-author').value.trim();
+  if (!rawTitle) { toast('先にタイトルを入力してください', 'err'); return; }
+  const { base: title } = stripTrailingVolume(rawTitle);
+
+  const vols = [...document.querySelectorAll('#rp-vol-grid input:checked')].map(el => Number(el.value));
+  if (!vols.length) { toast('巻を1つ以上選択してください', 'err'); return; }
+
+  const btn = document.getElementById('rp-isbn-btn');
+  btn.disabled = true; btn.textContent = '取得中…';
+
+  const statusEl = document.getElementById('rp-isbn-status');
+  statusEl.style.display = 'block';
+  statusEl.className = 'isbn-fetch-status ss-scan';
+  statusEl.textContent = `0 / ${vols.length} 巻を処理中…`;
+
+  rpFetchedIsbns = {};
+  let ok = 0, fail = 0;
+
+  for (let i = 0; i < vols.length; i++) {
+    const v = vols[i];
+    statusEl.textContent = `${i + 1} / ${vols.length} 巻を処理中… (${v}巻)`;
+    const isbn = await fetchIsbnFromGoogleBooks(title, author, v);
+    if (isbn) {
+      rpFetchedIsbns[v] = isbn;
+      ok++;
+      document.querySelectorAll('#rp-vol-grid .vol-label').forEach(lbl => {
+        if (Number(lbl.querySelector('input')?.value) === v)
+          lbl.querySelector('.vol-chip').classList.add('has-isbn');
+      });
+    } else { fail++; }
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  btn.disabled = false; btn.textContent = '🔍 ISBN一括取得';
+  statusEl.className = 'isbn-fetch-status ' + (fail === 0 ? 'ss-ok' : 'ss-warn');
+  statusEl.textContent = `取得完了: ${ok}件成功 / ${fail}件未取得`;
+  if (fail > 0) statusEl.textContent += '（未取得分は空欄で登録されます）';
+
+  // 出版社・発売日を1件目から補完
+  if (ok > 0) {
+    const sample = await fetchOpenBD(Object.values(rpFetchedIsbns)[0]);
+    if (sample) {
+      if (sample.publisher && !document.getElementById('rp-publisher').value)
+        document.getElementById('rp-publisher').value = sample.publisher;
+      if (sample.published_date && !document.getElementById('rp-pubdate').value)
+        document.getElementById('rp-pubdate').value = sample.published_date;
+    }
+  }
+}
+
+async function rpSaveAll() {
+  const rawTitle = document.getElementById('rp-title').value.trim();
+  if (!rawTitle) { toast('タイトルを入力してください', 'err'); return; }
+  const { base: titleBase } = stripTrailingVolume(rawTitle);
+  const title  = cleanTitle(titleBase);
+  const author = cleanAuthor(document.getElementById('rp-author').value.trim());
+  const type      = document.getElementById('rp-type').value;
+  const publisher = document.getElementById('rp-publisher').value.trim();
+  const pubdate   = document.getElementById('rp-pubdate').value.trim();
+  const memo      = document.getElementById('rp-memo').value.trim();
+
+  const vols = [...document.querySelectorAll('#rp-vol-grid input:checked')].map(el => Number(el.value));
+  if (!vols.length) { toast('巻を1つ以上選択してください', 'err'); return; }
+
+  const seriesId = `sid_${Date.now().toString(36)}`;
+  const now = nowISO();
+
+  const books = await Promise.all(vols.map(async v => {
+    const isbn = rpFetchedIsbns[v] || '';
+    let pub = publisher, pdate = pubdate;
+    if (isbn && !publisher) {
+      const info = await fetchOpenBD(isbn);
+      if (info) { pub = info.publisher || ''; pdate = pdate || info.published_date || ''; }
+    }
+    return {
+      id: makeId(author, title, v, type),
+      type, title, author, isbn,
+      series_id:      type === 'manga' ? seriesId : null,
+      volume:         type === 'manga' ? v : null,
+      publisher:      pub,
+      published_date: pdate,
+      memo, status: 'available', borrower: '', borrow_date: '',
+      created_at: now, updated_at: nowISO(),
+    };
+  }));
+
+  const existIds = new Set(allBooks.map(b => b.id));
+  const dupes = books.filter(b => existIds.has(b.id));
+  if (dupes.length && !confirm(`${dupes.length}件は既存データと同じIDです（上書きされます）。続けますか？`)) return;
+
+  try {
+    await dbPutMany(books);
+    toast(`${books.length}冊を一括登録しました`, 'ok');
+    closeRapid();
+    await loadBooks();
+  } catch(e) { toast('登録エラー: ' + e.message, 'err'); }
+}
+
+// ============================================================
+// ISBN API: openBD → 出版社・発売日取得
+// openBD は ISBN から書誌情報を取得する国内向けAPI（登録不要・無料）
+// 漫画・和書のカバレッジが Google Books より高い
+// ============================================================
+async function fetchOpenBD(isbn) {
+  try {
+    const clean = String(isbn||'').replace(/[- ]/g,'');
+    if (!clean) return null;
+    const res = await fetch(`https://api.openbd.jp/v1/get?isbn=${clean}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || !data[0]) return null;
+    const s = data[0].summary || {};
+    return {
+      publisher:      s.publisher || '',
+      published_date: s.pubdate   || '',
+      title:          s.title     || '',
+      author:         s.author    || '',
+    };
+  } catch { return null; }
+}
+
+// Google Books API: タイトル + 著者 + 巻数でISBNを逆引き
+// openBD は ISBN→書誌情報のみ対応のため、逆引きには Google Books を使用
+// API Key 不要（ただし1日1000リクエスト上限あり）
+async function fetchIsbnFromGoogleBooks(title, author, volume) {
+  try {
+    const q = encodeURIComponent(
+      `intitle:${title}${volume ? ' ' + volume + '巻' : ''}${author ? ' inauthor:' + author : ''}`
+    );
+    const url = `https://www.googleapis.com/books/v1/volumes?q=${q}&langRestrict=ja&maxResults=5`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.items || !data.items.length) return null;
+
+    for (const item of data.items) {
+      const ids = item.volumeInfo?.industryIdentifiers || [];
+      const isbn13 = ids.find(x => x.type === 'ISBN_13');
+      if (isbn13) return isbn13.identifier;
+    }
+    return null;
+  } catch { return null; }
+}
+
+// ============================================================
+// Barcode Scanner (ZXing.js) - 通常フォーム用
+// ZXingはinitial loadから除外し、初回スキャン時にlazyロード
+// ============================================================
+let codeReader = null;
+
+async function openScanner(target) {
+  const wrap = document.getElementById('scanner-single');
+  if (wrap.style.display === 'block') { stopScanner(); return; }
+
+  wrap.style.display = 'block';
+  setScanStatus('single', 'scan', '📡 カメラを起動中…');
+  switchScanTab('camera', 'single');
+
+  if (location.protocol === 'file:') {
+    setScanStatus('single', 'warn',
+      '⚠️ file://では一部ブラウザでカメラが使えません。画像アップロードをお試しください。');
+    return;
+  }
+
+  try {
+    await loadZXing();
+    codeReader = new ZXing.BrowserMultiFormatReader();
+    const video = document.getElementById('scanner-video');
+    setScanStatus('single','scan','📡 スキャン中… バーコードをガイド枠に合わせてください');
+    const constraints = {
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } }
+    };
+    await codeReader.decodeFromConstraints(constraints, video, async (result, err) => {
+      if (result) {
+        const text = result.getText();
+        if (/^97[89]\d{10}$/.test(text)) {
+          stopScanner();
+          document.getElementById('f-isbn').value = text;
+          setScanStatus('single','ok',`✅ 読取成功: ${text}`);
+          await autoFillBiblioSingle(text);
+        }
+      }
+    });
+  } catch (e) {
+    const msg = e.name === 'NotAllowedError'
+      ? 'カメラの使用が拒否されました。ブラウザの設定で許可してください。'
+      : `カメラエラー: ${e.message}`;
+    setScanStatus('single','err', '❌ ' + msg);
+  }
+}
+
+async function scanFromImage(input, target) {
+  const file = input.files[0]; if (!file) return;
+  setScanStatus('single','scan','🔍 画像を解析中…');
+  const preview = document.getElementById('img-preview');
+  preview.src = URL.createObjectURL(file);
+  preview.style.display = 'block';
+  try {
+    await loadZXing();
+    codeReader = new ZXing.BrowserMultiFormatReader();
+    const img = new Image();
+    img.src = URL.createObjectURL(file);
+    await new Promise(r => img.onload = r);
+
+    const result = await codeReader.decodeFromImageElement(img);
+    const text = result.getText();
+
+    if (/^97[89]\d{10}$/.test(text)) {
+      document.getElementById('f-isbn').value = text;
+      setScanStatus('single','ok',`✅ 読取成功: ${text}`);
+      await autoFillBiblioSingle(text);
+    } else {
+      setScanStatus('single','warn',`⚠️ ISBN以外のバーコードを検出: ${text}（手入力に切替可）`);
+    }
+  } catch {
+    setScanStatus('single','err','❌ バーコードを検出できませんでした。別の画像をお試しください。');
+  }
+  input.value = '';
+}
+
+function handleImgDrop(e, target) {
+  e.preventDefault();
+  document.getElementById('img-drop-zone').classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (!file) return;
+  // ダミーのinputを使って処理を共通化
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  document.getElementById('isbn-img-file').files = dt.files;
+  scanFromImage(document.getElementById('isbn-img-file'), target);
+}
+
+function stopScanner() {
+  if (codeReader) { try { codeReader.reset(); } catch {} codeReader = null; }
+  document.getElementById('scanner-single').style.display = 'none';
+  document.getElementById('img-preview').style.display = 'none';
+}
+
+function setScanStatus(target, type, msg) {
+  const el = document.getElementById(`scan-status-${target}`);
+  if (!el) return;
+  el.className = `scanner-status ss-${type}`;
+  el.textContent = msg;
+}
+
+function switchScanTab(tab, target) {
+  const tabs = document.querySelectorAll('#scanner-single .sc-tab');
+  tabs[0].classList.toggle('active', tab==='camera');
+  tabs[1].classList.toggle('active', tab==='image');
+  document.getElementById('scan-camera-single').style.display = tab==='camera' ? 'block' : 'none';
+  document.getElementById('scan-image-single').style.display  = tab==='image'  ? 'block' : 'none';
+  if (tab === 'image') { if (codeReader) { try { codeReader.reset(); } catch {} } }
+}
+
+// ============================================================
+// 書誌自動補完（単冊用）: ISBNスキャン後に openBD を叩く
+// ============================================================
+async function autoFillBiblioSingle(isbn) {
+  if (!isbn) return;
+  setScanStatus('single','scan','📚 書誌情報を取得中…');
+  const info = await fetchOpenBD(isbn);
+  if (!info) {
+    setScanStatus('single','warn','⚠️ 書誌情報を取得できませんでした（オフラインまたは未登録）。手入力してください。');
+    return;
+  }
+  if (info.title && !document.getElementById('f-title').value) {
+    // ① 末尾巻数を除去してタイトルをクリーン化
+    const { base, detected } = stripTrailingVolume(info.title);
+    document.getElementById('f-title').value = cleanTitle(base);
+    // ② 検出した巻数をvolume欄に自動入力（空の場合のみ）
+    if (detected && !document.getElementById('f-vol').value) {
+      document.getElementById('f-vol').value = detected;
+    }
+  }
+  if (info.author && !document.getElementById('f-author').value) {
+    document.getElementById('f-author').value = cleanAuthor(info.author);
+  }
+  if (info.publisher) document.getElementById('f-publisher').value = info.publisher;
+  if (info.published_date) document.getElementById('f-pubdate').value = info.published_date;
+  setScanStatus('single','ok',`✅ 書誌情報を取得しました（${info.publisher||'出版社不明'}）`);
+}
+
+// ============================================================
+// シリーズ一括 ISBN 取得
+// Google Books でISBN逆引き → openBD で書誌補完
+// ============================================================
+let fetchedIsbns = {}; // { volume: isbn }
+
+async function fetchAllIsbns() {
+  const rawTitle = document.getElementById('f-title').value.trim();
+  const author   = document.getElementById('f-author').value.trim();
+  if (!rawTitle) { toast('先にタイトルを入力してください','err'); return; }
+
+  // 末尾の巻数表記を除去してAPIクエリに使用するベースタイトルを取得
+  const { base: title } = stripTrailingVolume(rawTitle);
+
+  const vols = [...document.querySelectorAll('#vol-grid input:checked')].map(el=>Number(el.value));
+  if (!vols.length) { toast('巻を1つ以上選択してください','err'); return; }
+
+  const btn = document.getElementById('isbn-fetch-btn');
+  btn.disabled = true; btn.textContent = '取得中…';
+
+  const statusEl = document.getElementById('isbn-fetch-status');
+  statusEl.style.display = 'block';
+  statusEl.className = 'isbn-fetch-status ss-scan';
+  statusEl.textContent = `0 / ${vols.length} 巻を処理中…`;
+
+  fetchedIsbns = {};
+  let ok = 0, fail = 0;
+
+  for (let i = 0; i < vols.length; i++) {
+    const v = vols[i];
+    statusEl.textContent = `${i+1} / ${vols.length} 巻を処理中… (${v}巻)`;
+
+    const isbn = await fetchIsbnFromGoogleBooks(title, author, v);
+    if (isbn) {
+      fetchedIsbns[v] = isbn;
+      ok++;
+      // 取得済みチップに✓マーク
+      const chips = document.querySelectorAll('#vol-grid .vol-chip');
+      const labels = document.querySelectorAll('#vol-grid .vol-label');
+      labels.forEach(lbl => {
+        const inp = lbl.querySelector('input');
+        if (Number(inp?.value) === v) {
+          lbl.querySelector('.vol-chip').classList.add('has-isbn');
+        }
+      });
+    } else {
+      fail++;
+    }
+    // API負荷軽減: 100ms待機
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  btn.disabled = false; btn.textContent = '🔍 ISBN一括取得';
+  statusEl.className = 'isbn-fetch-status ' + (fail===0 ? 'ss-ok' : 'ss-warn');
+  statusEl.textContent = `取得完了: ${ok}件成功 / ${fail}件未取得`;
+  if (fail > 0) statusEl.textContent += '（未取得分は空欄で登録されます）';
+
+  // publisher / published_date を1件目から取得して後でDBに入れる
+  if (ok > 0 && Object.values(fetchedIsbns)[0]) {
+    const sample = await fetchOpenBD(Object.values(fetchedIsbns)[0]);
+    if (sample) {
+      if (sample.publisher && !document.getElementById('f-publisher').value)
+        document.getElementById('f-publisher').value = sample.publisher;
+      if (sample.published_date && !document.getElementById('f-pubdate').value)
+        document.getElementById('f-pubdate').value = sample.published_date;
+    }
+  }
+}
+
+// ============================================================
+// Load / Filters
+// ============================================================
+async function loadBooks() {
+  showLoad(true);
+  try {
+    allBooks = await dbAll();
+    applyFilters();
+    updateCounts();
+  } catch(e) { toast('DBエラー: '+e.message,'err'); }
+  showLoad(false);
+}
+
+function updateCounts() {
+  const c = {all:allBooks.length, manga:0, book:0, magazine:0, other:0};
+  allBooks.forEach(b => { if (c[b.type]!==undefined) c[b.type]++; });
+  Object.keys(c).forEach(k => {
+    const el = document.getElementById('c-'+k);
+    if (el) el.textContent = c[k];
+  });
+}
+
+function switchTab(type) {
+  currentTab = type; page = 1;
+  document.querySelectorAll('.type-tab').forEach(t => t.classList.toggle('active', t.dataset.type===type));
+  applyFilters();
+}
+
+function onSearch() { page = 1; applyFilters(); }
+
+function applyFilters() {
+  const q      = document.getElementById('q').value.trim().toLowerCase();
+  const status = document.getElementById('f-status').value;
+  const sort   = document.getElementById('f-sort').value;
+
+  filtered = allBooks.filter(b => {
+    if (currentTab !== 'all' && b.type !== currentTab) return false;
+    if (status && b.status !== status) return false;
+    if (q) {
+      const hay = [b.title, b.author, b.isbn, b.publisher].map(x=>String(x||'').toLowerCase()).join(' ');
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  filtered.sort((a, b) => {
+    if (sort === 'id_asc')       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    if (sort === 'id_desc')      return b.id < a.id ? -1 : b.id > a.id ? 1 : 0;
+    if (sort === 'created_desc') return (b.created_at||'') > (a.created_at||'') ? 1 : -1;
+    if (sort === 'created_asc')  return (a.created_at||'') > (b.created_at||'') ? 1 : -1;
+    return 0;
+  });
+
+  const seriesCount = viewMode === 'series'
+    ? new Set(filtered.map(b => b.series_id || b.title)).size
+    : null;
+  const pubCount = viewMode === 'publisher'
+    ? new Set(filtered.map(b => b.publisher || '不明')).size
+    : null;
+  document.getElementById('total-label').textContent =
+    seriesCount !== null ? `${filtered.length}冊 / ${seriesCount}シリーズ` :
+    pubCount    !== null ? `${filtered.length}冊 / ${pubCount}出版社` :
+    `${filtered.length}件`;
+  renderView();
+}
+
+// ============================================================
+// View mode (list / series)
+// ============================================================
+let viewMode = 'list';
+
+function switchView(mode) {
+  viewMode = mode;
+  document.getElementById('vt-list').classList.toggle('active',      mode === 'list');
+  document.getElementById('vt-series').classList.toggle('active',    mode === 'series');
+  document.getElementById('vt-publisher').classList.toggle('active', mode === 'publisher');
+  document.getElementById('table-wrap').style.display     = mode === 'list'      ? 'block' : 'none';
+  document.getElementById('series-view').style.display    = mode === 'series'    ? 'block' : 'none';
+  document.getElementById('publisher-view').style.display = mode === 'publisher' ? 'block' : 'none';
+  document.getElementById('pgn').style.display            = mode === 'list'      ? ''      : 'none';
+  // シリーズビューに切り替えたらデフォルトを冊数順(多い順)に
+  if (mode === 'series' || mode === 'publisher') {
+    const sel = document.getElementById('f-sort');
+    if (!['count_desc','count_asc'].includes(sel.value)) sel.value = 'count_desc';
+  }
+  applyFilters();
+}
+
+function renderView() {
+  if      (viewMode === 'list')      { renderTable(); renderPgn(); }
+  else if (viewMode === 'series')    renderSeriesView();
+  else if (viewMode === 'publisher') renderPublisherView();
+}
+
+// ============================================================
+// Series grouped view
+// ============================================================
+function renderSeriesView() {
+  const wrap = document.getElementById('series-view');
+  if (!filtered.length) { wrap.innerHTML = ''; return; }
+
+  // タイトルをグループ化用に正規化（全角→半角・記号除去・小文字化）
+  const normG = s => String(s||'').toLowerCase()
+    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+    .replace(/[Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+    .replace(/[\s　\-－・。、！!？?♪～〜]/g, '')
+    .replace(/[^\p{L}\p{N}]/gu, '');
+
+  // タイトルでグループ化（series_idがあればそれ優先、なければ正規化タイトルでグループ）
+  const groups = new Map(); // key → { title, author, type, key, books[] }
+  filtered.forEach(b => {
+    const key = b.series_id || normG(b.title);
+    if (!groups.has(key)) groups.set(key, { title: b.title, author: b.author, type: b.type, key, books: [] });
+    groups.get(key).books.push(b);
+  });
+
+  // グループ内を巻数昇順にソート
+  groups.forEach(g => g.books.sort((a, b) => (a.volume || 0) - (b.volume || 0)));
+
+  // グループをソート（f-sortと連動）
+  const sort = document.getElementById('f-sort').value;
+  const sorted = [...groups.values()].sort((a, b) => {
+    if (sort === 'count_desc') return b.books.length - a.books.length;
+    if (sort === 'count_asc')  return a.books.length - b.books.length;
+    // それ以外はタイトル昇順
+    return a.title < b.title ? -1 : a.title > b.title ? 1 : 0;
+  });
+
+  wrap.innerHTML = sorted.map(g => {
+    const lendingCount = g.books.filter(b => b.status === 'lending').length;
+    const lendingBadge = lendingCount ? `<span class="badge bs-lending" style="margin-left:4px">${lendingCount}冊貸出中</span>` : '';
+    const keyEsc = esc(g.key);
+
+    const rows = g.books.map(b => {
+      let lendBtn = '';
+      if      (b.status === 'available') lendBtn = `<button class="btn btn-sm btn-secondary" onclick="openLend('${esc(b.id)}')">貸出</button>`;
+      else if (b.status === 'lending')   lendBtn = `<button class="btn btn-sm btn-secondary" onclick="doReturn('${esc(b.id)}')">返却</button>`;
+      return `<div class="series-vol-row">
+        <span class="series-vol-num">${b.volume ? b.volume + '巻' : '―'}</span>
+        <span class="series-vol-title">${esc(b.title)}</span>
+        ${statusBadge(b.status)}
+        ${b.status === 'lending' && b.borrower ? `<span style="font-size:.76rem;color:var(--text3)">${esc(b.borrower)}</span>` : ''}
+        <span class="series-vol-actions">
+          ${lendBtn}
+          <button class="btn btn-sm btn-secondary" onclick="openEdit('${esc(b.id)}')">編集</button>
+          <button class="btn btn-sm btn-danger"    onclick="confirmDel('${esc(b.id)}')">削除</button>
+        </span>
+      </div>`;
+    }).join('');
+
+    return `<div class="series-group">
+      <div class="series-group-header" onclick="toggleGroup(this)">
+        <span class="series-group-arrow">▶</span>
+        ${typeBadge(g.type)}
+        <span class="series-group-title">${esc(g.title)}</span>
+        ${lendingBadge}
+        <span class="series-group-meta">${esc(g.author || '')} / ${g.books.length}冊</span>
+        <button class="btn btn-sm btn-secondary" style="margin-left:6px"
+          onclick="event.stopPropagation();openBulkEdit('${keyEsc}')">✏️ 一括編集</button>
+      </div>
+      <div class="series-group-body">${rows}</div>
+    </div>`;
+  }).join('') + `<div class="back-to-top"><button class="back-to-top-btn" onclick="window.scrollTo({top:0,behavior:'smooth'})">▲ 先頭に戻る</button></div>`;
+}
+
+function toggleGroup(header) {
+  const arrow = header.querySelector('.series-group-arrow');
+  const body  = header.nextElementSibling;
+  const open  = body.classList.toggle('open');
+  arrow.classList.toggle('open', open);
+}
+
+// ============================================================
+// Publisher grouped view
+// ============================================================
+function renderPublisherView() {
+  const wrap = document.getElementById('publisher-view');
+  if (!filtered.length) { wrap.innerHTML = ''; return; }
+
+  const normG = s => String(s||'').toLowerCase()
+    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+    .replace(/[Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+    .replace(/[\s　\-－・。、！!？?♪～〜]/g, '')
+    .replace(/[^\p{L}\p{N}]/gu, '');
+
+  // 出版社でグループ化 → 出版社内でタイトルをグループ化
+  const pubMap = new Map(); // publisher → Map<normTitle, { title, author, type, books[] }>
+  filtered.forEach(b => {
+    const pub = b.publisher || '（不明）';
+    if (!pubMap.has(pub)) pubMap.set(pub, new Map());
+    const titleMap = pubMap.get(pub);
+    const tkey = b.series_id || normG(b.title);
+    if (!titleMap.has(tkey)) titleMap.set(tkey, { title: b.title, author: b.author, type: b.type, books: [] });
+    titleMap.get(tkey).books.push(b);
+  });
+
+  // ソート
+  const sort = document.getElementById('f-sort').value;
+  const sortFn = (a, b) => {
+    if (sort === 'count_desc') return b.books.length - a.books.length;
+    if (sort === 'count_asc')  return a.books.length - b.books.length;
+    return a.title < b.title ? -1 : a.title > b.title ? 1 : 0;
+  };
+
+  // 出版社をタイトル数降順でソート
+  const sortedPubs = [...pubMap.entries()].sort((a, b) => b[1].size - a[1].size);
+
+  wrap.innerHTML = sortedPubs.map(([pub, titleMap]) => {
+    const titles = [...titleMap.values()].sort(sortFn);
+    const totalBooks = titles.reduce((s, t) => s + t.books.length, 0);
+
+    const rows = titles.map(t => {
+      return `<div class="pub-title-row">
+        <span class="pub-title-type">${typeBadge(t.type)}</span>
+        <span class="pub-title-name">${esc(t.title)}</span>
+        <span class="pub-title-vols">${t.books.length}冊</span>
+      </div>`;
+    }).join('');
+
+    return `<div class="pub-group">
+      <div class="pub-group-header" onclick="togglePubGroup(this)">
+        <span class="pub-group-arrow">▶</span>
+        <span class="pub-group-name">🏢 ${esc(pub)}</span>
+        <span class="pub-group-meta">${titles.length}タイトル・${totalBooks}冊</span>
+      </div>
+      <div class="pub-group-body">${rows}</div>
+    </div>`;
+  }).join('') + `<div class="back-to-top"><button class="back-to-top-btn" onclick="window.scrollTo({top:0,behavior:'smooth'})">▲ 先頭に戻る</button></div>`;
+}
+
+function togglePubGroup(header) {
+  const arrow = header.querySelector('.pub-group-arrow');
+  const body  = header.nextElementSibling;
+  const open  = body.classList.toggle('open');
+  arrow.classList.toggle('open', open);
+}
+
+// ============================================================
+// Bulk Edit（シリーズ一括編集）
+// ============================================================
+function openBulkEdit(key) {
+  // keyはseries_idまたはtitle
+  const targets = allBooks.filter(b => (b.series_id || b.title) === key);
+  if (!targets.length) return;
+
+  document.getElementById('bulk-key').value       = key;
+  document.getElementById('bulk-title').value     = '';
+  document.getElementById('bulk-author').value    = '';
+  document.getElementById('bulk-publisher').value = '';
+  document.getElementById('bulk-count').textContent = targets.length;
+  document.getElementById('bulk-preview').innerHTML = targets
+    .sort((a, b) => (a.volume || 0) - (b.volume || 0))
+    .map(b => `<div class="bulk-preview-item">${b.volume ? b.volume + '巻 ' : ''}${esc(b.title)} / ${esc(b.author || '―')}</div>`)
+    .join('');
+  openM('m-bulk');
+}
+
+async function saveBulkEdit() {
+  const key       = document.getElementById('bulk-key').value;
+  const newTitle     = cleanTitle(document.getElementById('bulk-title').value.trim());
+  const newAuthor    = cleanAuthor(document.getElementById('bulk-author').value.trim());
+  const newPublisher = document.getElementById('bulk-publisher').value.trim();
+
+  if (!newTitle && !newAuthor && !newPublisher) { toast('いずれかのフィールドを入力してください', 'err'); return; }
+
+  const targets = allBooks.filter(b => (b.series_id || b.title) === key);
+  if (!targets.length) { toast('対象が見つかりません', 'err'); return; }
+
+  const now = nowISO();
+  const updated = targets.map(b => ({
+    ...b,
+    title:      newTitle     || b.title,
+    author:     newAuthor    || b.author,
+    publisher:  newPublisher || b.publisher,
+    updated_at: now,
+  }));
+
+  try {
+    await dbPutMany(updated);
+    toast(`${updated.length}冊を一括更新しました`, 'ok');
+    closeM('m-bulk');
+    await loadBooks();
+  } catch(e) { toast('更新エラー: ' + e.message, 'err'); }
+}
+
+// ============================================================
+// Render（viewMode対応に変更）
+// ============================================================
+function renderTable() {
+  const tbody = document.getElementById('tbody');
+  const empty = document.getElementById('empty');
+  if (!filtered.length) { tbody.innerHTML=''; empty.style.display='block'; return; }
+  empty.style.display = 'none';
+
+  const slice = filtered.slice((page-1)*PER, page*PER);
+  tbody.innerHTML = slice.map(b => {
+    const vol = b.volume ? `<span style="font-size:.8rem;color:var(--text2)">${b.volume}巻</span>` : '';
+    let lendBtn = '';
+    if      (b.status === 'available') lendBtn = `<button class="btn btn-sm btn-secondary" onclick="openLend('${b.id}')">貸出</button>`;
+    else if (b.status === 'lending')   lendBtn = `<button class="btn btn-sm btn-secondary" onclick="doReturn('${b.id}')">返却</button>`;
+    return `<tr>
+      <td>${typeBadge(b.type)}</td>
+      <td class="td-title">
+        <div class="t">${esc(b.title)}</div>
+        ${b.status==='lending'&&b.borrower?`<div class="s">貸出中：${esc(b.borrower)}${b.borrow_date?' ('+b.borrow_date+')':''}</div>`:''}
+      </td>
+      <td style="color:var(--text2);font-size:.85rem">${esc(b.author||'')}</td>
+      <td>${vol}</td>
+      <td style="color:var(--text2);font-size:.82rem">${esc(b.publisher||'')}</td>
+      <td>${statusBadge(b.status)}</td>
+      <td class="td-actions">
+        ${lendBtn}
+        <button class="btn btn-sm btn-secondary" onclick="openEdit('${esc(b.id)}')">編集</button>
+        <button class="btn btn-sm btn-danger"    onclick="confirmDel('${esc(b.id)}')">削除</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function formatPubDate(d) {
+  if (!d) return '';
+  if (/^\d{6}$/.test(d)) return `${d.slice(0,4)}年${d.slice(4,6)}月`;
+  if (/^\d{8}$/.test(d)) return `${d.slice(0,4)}.${d.slice(4,6)}.${d.slice(6,8)}`;
+  return d;
+}
+
+// ============================================================
+// Pagination
+// ============================================================
+function renderPgn() {
+  const total = filtered.length;
+  const pages = Math.ceil(total/PER);
+  const el = document.getElementById('pgn');
+  if (pages<=1) { el.innerHTML=''; return; }
+  const s=(page-1)*PER+1, e=Math.min(page*PER,total);
+  const range = pgRange(page,pages);
+  let html = `<div class="pg-info">${s}–${e} / ${total}件</div><div class="pg-btns">`;
+  html += `<button class="pg-btn" onclick="goPage(${page-1})" ${page===1?'disabled':''}>‹</button>`;
+  range.forEach(p => {
+    if (p==='…') html += `<span class="pg-btn" style="cursor:default">…</span>`;
+    else html += `<button class="pg-btn ${p===page?'active':''}" onclick="goPage(${p})">${p}</button>`;
+  });
+  html += `<button class="pg-btn" onclick="goPage(${page+1})" ${page===pages?'disabled':''}>›</button></div>`;
+  el.innerHTML = html;
+}
+function pgRange(cur,total){
+  if(total<=7) return Array.from({length:total},(_,i)=>i+1);
+  if(cur<=4)       return [1,2,3,4,5,'…',total];
+  if(cur>=total-3) return [1,'…',total-4,total-3,total-2,total-1,total];
+  return [1,'…',cur-1,cur,cur+1,'…',total];
+}
+function goPage(p) { page=p; renderTable(); renderPgn(); window.scrollTo({top:0,behavior:'smooth'}); }
+
+// ============================================================
+// Add / Edit Modal
+// ============================================================
+function openAdd() {
+  clearForm();
+  document.getElementById('m-title').textContent  = '蔵書を登録';
+  document.getElementById('save-btn').textContent = '登録';
+  document.getElementById('save-btn').dataset.mode = 'add';
+  document.getElementById('series-wrap').style.display = 'flex';
+  document.getElementById('series-wrap').style.flexDirection = 'column';
+  openM('m-book');
+}
+
+function openEdit(id) {
+  const b = allBooks.find(x=>x.id===id);
+  if (!b) return;
+  clearForm();
+  document.getElementById('m-title').textContent   = '蔵書を編集';
+  document.getElementById('save-btn').textContent  = '更新';
+  document.getElementById('save-btn').dataset.mode = 'edit';
+  document.getElementById('save-btn').dataset.id   = id;
+
+  document.getElementById('f-id').value        = b.id;
+  document.getElementById('f-sid').value       = b.series_id||'';
+  document.getElementById('f-type').value      = b.type||'book';
+  document.getElementById('f-title').value     = b.title||'';
+  document.getElementById('f-author').value    = b.author||'';
+  document.getElementById('f-isbn').value      = b.isbn||'';
+  document.getElementById('f-vol').value       = b.volume||'';
+  document.getElementById('f-publisher').value = b.publisher||'';
+  document.getElementById('f-pubdate').value   = b.published_date||'';
+  document.getElementById('f-memo').value      = b.memo||'';
+  document.getElementById('f-status2').value   = b.status||'available';
+  document.getElementById('series-wrap').style.display = 'none';
+  stopScanner();
+  onTypeChange();
+  openM('m-book');
+}
+
+function clearForm() {
+  ['f-id','f-sid','f-title','f-author','f-isbn','f-vol','f-publisher','f-pubdate','f-memo'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('f-type').value    = 'manga';
+  document.getElementById('f-status2').value = 'available';
+  document.getElementById('f-series').checked = false;
+  document.getElementById('vol-picker').style.display = 'none';
+  document.getElementById('isbn-fetch-status').style.display = 'none';
+  document.getElementById('scanner-single').style.display = 'none';
+  fetchedIsbns = {};
+  onTypeChange();
+}
+
+function onTypeChange() {
+  const isManga = document.getElementById('f-type').value === 'manga';
+  document.getElementById('vg').style.display = isManga ? 'block' : 'none';
+  const sw = document.getElementById('series-wrap');
+  if (sw.style.display !== 'none') sw.style.display = isManga ? 'flex' : 'none';
+}
+
+function onSeriesToggle() {
+  const on = document.getElementById('f-series').checked;
+  document.getElementById('vol-picker').style.display = on ? 'block' : 'none';
+  document.getElementById('vg').style.display = on ? 'none' : 'block';
+  if (on) { buildVolPicker(); fetchedIsbns = {}; }
+  updateTitleStripHint();
+}
+
+function updateTitleStripHint() {
+  const hint  = document.getElementById('title-strip-hint');
+  const onSeries = document.getElementById('f-series').checked;
+  if (!onSeries) { hint.style.display = 'none'; return; }
+
+  const raw = document.getElementById('f-title').value.trim();
+  if (!raw) { hint.style.display = 'none'; return; }
+
+  const { base, detected } = stripTrailingVolume(raw);
+  if (detected) {
+    hint.style.display = 'block';
+    hint.textContent = `💡 末尾の「${detected}」を検出。DBには「${base}」として登録し、各巻のISBN検索にも「${base}」を使用します。`;
+  } else {
+    hint.style.display = 'none';
+  }
+}
+
+function buildVolPicker() {
+  const max = Math.min(parseInt(document.getElementById('f-maxvol').value)||1, 500);
+  const grid = document.getElementById('vol-grid');
+  grid.innerHTML = '';
+  for (let i=1; i<=max; i++) {
+    const lbl = document.createElement('label');
+    lbl.className = 'vol-label';
+    lbl.innerHTML = `<input type="checkbox" name="vol" value="${i}" checked><span class="vol-chip">${i}</span>`;
+    grid.appendChild(lbl);
+  }
+  updVolCount();
+  grid.addEventListener('change', updVolCount);
+}
+function updVolCount() {
+  const n = document.querySelectorAll('#vol-grid input:checked').length;
+  document.getElementById('vol-count').textContent = `${n}巻選択中`;
+}
+function volAll(v) {
+  document.querySelectorAll('#vol-grid input').forEach(el => el.checked = v);
+  updVolCount();
+}
+
+async function saveBook() {
+  const mode   = document.getElementById('save-btn').dataset.mode;
+  const rawTitle  = document.getElementById('f-title').value.trim();
+  if (!rawTitle)  { toast('タイトルを入力してください','err'); return; }
+  const title  = cleanTitle(rawTitle);
+
+  const type       = document.getElementById('f-type').value;
+  const author     = cleanAuthor(document.getElementById('f-author').value.trim());
+  const publisher  = document.getElementById('f-publisher').value.trim();
+  const pubdate    = document.getElementById('f-pubdate').value.trim();
+  const isSeries   = document.getElementById('f-series').checked;
+  const now        = nowISO();
+
+  // ---- シリーズ一括登録 ----
+  if (mode === 'add' && type === 'manga' && isSeries) {
+    const vols = [...document.querySelectorAll('#vol-grid input:checked')].map(el=>Number(el.value));
+    if (!vols.length) { toast('巻を1つ以上選択してください','err'); return; }
+
+    // 末尾の巻数表記を除去 → さらにcleanTitleを適用
+    const { base: storeTitle } = stripTrailingVolume(title);
+
+    const seriesId = `sid_${Date.now().toString(36)}`;
+    const books = await Promise.all(vols.map(async v => {
+      const isbn    = fetchedIsbns[v] || '';
+      // 各巻の publisher/pubdate を openBD から取得（ISBN取得済みのもの）
+      let pub = publisher, pdate = pubdate;
+      if (isbn && !publisher) {
+        const info = await fetchOpenBD(isbn);
+        if (info) { pub = info.publisher||''; pdate = pdate||info.published_date||''; }
+      }
+      return {
+        id: makeId(author, storeTitle, v, 'manga'),
+        type, title: storeTitle, author, isbn,
+        series_id: seriesId, volume: v,
+        publisher: pub, published_date: pdate,
+        memo:   document.getElementById('f-memo').value.trim(),
+        status: document.getElementById('f-status2').value,
+        borrower:'', borrow_date:'',
+        created_at: now, updated_at: nowISO(),
+      };
+    }));
+
+    const existIds = new Set(allBooks.map(b=>b.id));
+    const dupes = books.filter(b=>existIds.has(b.id));
+    if (dupes.length && !confirm(`${dupes.length}件は既存データと同じIDです（上書きされます）。続けますか？`)) return;
+
+    try {
+      await dbPutMany(books);
+      toast(`${books.length}冊を一括登録しました`,'ok');
+      closeM('m-book');
+      stopScanner();
+      await loadBooks();
+    } catch(e) { toast('登録エラー: '+e.message,'err'); }
+    return;
+  }
+
+  // ---- 単冊 ----
+  const volume = type==='manga' ? (parseInt(document.getElementById('f-vol').value)||null) : null;
+  const newId  = mode==='edit' ? document.getElementById('f-id').value : makeId(author, title, volume, type);
+  const orig   = mode==='edit' ? allBooks.find(x=>x.id===newId)||{} : {};
+
+  // series_id: フォームに明示指定がなければ同タイトル・著者の既存レコードから引き継ぐ
+  const explicitSid = document.getElementById('f-sid').value;
+  let seriesId = explicitSid || null;
+  if (!seriesId && type === 'manga') {
+    const norm = s => String(s||'').toLowerCase().replace(/\s+/g,'').replace(/[^\p{L}\p{N}]/gu,'');
+    const match = allBooks.find(b =>
+      b.type === 'manga' && b.series_id &&
+      norm(b.title) === norm(title) &&
+      norm(b.author) === norm(author)
+    );
+    seriesId = match?.series_id || null;
+  }
+
+  const book = {
+    id: newId, type, title, author,
+    isbn:           normalizeISBN(document.getElementById('f-isbn').value),
+    series_id:      seriesId,
+    volume,
+    publisher,
+    published_date: pubdate,
+    memo:           document.getElementById('f-memo').value.trim(),
+    status:         document.getElementById('f-status2').value,
+    borrower:       orig.borrower||'',
+    borrow_date:    orig.borrow_date||'',
+    created_at:     orig.created_at || now,
+    updated_at:     nowISO(),
+  };
+
+  try {
+    await dbPut(book);
+    toast(mode==='edit' ? '更新しました' : '登録しました','ok');
+    closeM('m-book');
+    stopScanner();
+    await loadBooks();
+  } catch(e) { toast('保存エラー: '+e.message,'err'); }
+}
+
+// ============================================================
+// Lend / Return
+// ============================================================
+function openLend(id) {
+  const b = allBooks.find(x=>x.id===id);
+  if (!b) return;
+  document.getElementById('lend-id').value    = id;
+  document.getElementById('f-borrower').value = '';
+  document.getElementById('f-bdate').value    = today();
+  document.getElementById('lend-title').textContent =
+    `貸出：${b.title}${b.volume ? ` ${b.volume}巻` : ''}`;
+
+  const sw    = document.getElementById('lend-series-wrap');
+  const list  = document.getElementById('lend-vol-list');
+  const hint  = document.getElementById('lend-vol-hint');
+
+  if (b.type === 'manga' && b.series_id) {
+    const sibs = allBooks
+      .filter(x => x.series_id===b.series_id && x.status==='available')
+      .sort((a,c) => (a.volume||0)-(c.volume||0));
+    if (sibs.length > 0) {
+      sw.style.display = 'block';
+      list.innerHTML = sibs.map(s => `
+        <label class="lend-vol-item">
+          <input type="checkbox" name="lend-vol" value="${esc(s.id)}" ${s.id===id?'checked disabled':''}>
+          <span class="vn">${s.volume}巻</span>
+          <span class="vt">${esc(s.title)}</span>
+          ${statusBadge(s.status)}
+        </label>`).join('');
+      hint.textContent = `※ 起点の ${b.volume}巻 は必ず含まれます`;
+      const forced = list.querySelector(`input[value="${id}"]`);
+      if (forced) forced.checked = true;
+    } else { sw.style.display = 'none'; }
+  } else { sw.style.display = 'none'; }
+
+  openM('m-lend');
+}
+
+async function saveLend() {
+  const borrower = document.getElementById('f-borrower').value.trim();
+  if (!borrower) { toast('借用者名を入力してください','err'); return; }
+  const bdate    = document.getElementById('f-bdate').value;
+  const checked  = [...document.querySelectorAll('#lend-vol-list input:checked')].map(el=>el.value);
+  const primary  = document.getElementById('lend-id').value;
+  const ids      = checked.length ? checked : [primary];
+  const now      = nowISO();
+  const updated  = ids.map(id => {
+    const b = allBooks.find(x=>x.id===id);
+    if (!b) return null;
+    return { ...b, status:'lending', borrower, borrow_date:bdate, updated_at:now };
+  }).filter(Boolean);
+  try {
+    await dbPutMany(updated);
+    toast(`${updated.length}冊を貸出登録しました`,'ok');
+    closeM('m-lend');
+    await loadBooks();
+  } catch(e) { toast('貸出エラー: '+e.message,'err'); }
+}
+
+async function doReturn(id) {
+  const b = allBooks.find(x=>x.id===id);
+  if (!b) return;
+  b.status='available'; b.borrower=''; b.borrow_date=''; b.updated_at=nowISO();
+  try {
+    await dbPut(b);
+    toast('返却処理しました','ok');
+    await loadBooks();
+  } catch(e) { toast('エラー: '+e.message,'err'); }
+}
+
+// ============================================================
+// Delete
+// ============================================================
+function confirmDel(id) {
+  const b = allBooks.find(x=>x.id===id);
+  if (!b) return;
+  document.getElementById('confirm-msg').textContent =
+    `「${b.title}${b.volume?` ${b.volume}巻`:''}」を削除しますか？この操作は元に戻せません。`;
+  document.getElementById('confirm-ok').onclick = async () => {
+    try {
+      await dbDel(id);
+      toast('削除しました','ok');
+      closeM('m-confirm');
+      await loadBooks();
+    } catch(e) { toast('削除エラー: '+e.message,'err'); }
+  };
+  openM('m-confirm');
+}
+
+// ============================================================
+// CSV  (列定義に publisher / published_date を追加)
+// ============================================================
+const CSV_COLS = ['id','type','title','author','isbn','series_id','volume','publisher','published_date','memo','status','borrower','borrow_date'];
+
+function exportCSV() {
+  if (!allBooks.length) { toast('エクスポートする蔵書がありません','info'); return; }
+  const sorted = [...allBooks].sort((a,b) => a.id<b.id?-1:a.id>b.id?1:0);
+  const rows = sorted.map(b => CSV_COLS.map(k => b[k]===null||b[k]===undefined?'':String(b[k])));
+  const csv  = Papa.unparse({ fields: CSV_COLS, data: rows }, { header: true });
+  const blob = new Blob(['\uFEFF'+csv], { type:'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `library_${today()}.csv`; a.click();
+  URL.revokeObjectURL(url);
+  toast(`${allBooks.length}件をエクスポートしました`,'ok');
+}
+
+function importCSV(input) {
+  const file = input.files[0]; if (!file) return;
+  Papa.parse(file, {
+    header: true, skipEmptyLines: true, encoding: 'UTF-8',
+    complete: async result => {
+      const rows = result.data;
+      if (!rows.length) { toast('データが見つかりません','err'); return; }
+      const now = nowISO();
+      const books = rows.map(r => ({
+        id:             r.id || makeId(r.author, r.title, r.volume, r.type||'book'),
+        type:           r.type||'book',
+        title:          r.title||'',
+        author:         r.author||'',
+        isbn:           r.isbn||'',
+        series_id:      r.series_id||null,
+        volume:         r.volume ? Number(r.volume) : null,
+        publisher:      r.publisher||'',
+        published_date: r.published_date||'',
+        memo:           r.memo||'',
+        status:         r.status||'available',
+        borrower:       r.borrower||'',
+        borrow_date:    r.borrow_date||'',
+        created_at:     r.created_at||now,
+        updated_at:     r.updated_at||now,
+      })).filter(b=>b.title);
+      try {
+        await dbPutMany(books);
+        toast(`${books.length}件をインポートしました`,'ok');
+        await loadBooks();
+      } catch(e) { toast('インポートエラー: '+e.message,'err'); }
+      input.value = '';
+    },
+    error: err => toast('CSVエラー: '+err.message,'err')
+  });
+}
+
+function toggleCsv() {
+  const body = document.getElementById('csv-body');
+  const chev = document.getElementById('csv-chev');
+  const open = body.style.display === 'none';
+  body.style.display = open ? 'flex' : 'none';
+  chev.textContent = open ? '▲' : '▼';
+}
+
+// ============================================================
+// Modal Helpers
+// ============================================================
+function openM(id)  { document.getElementById(id).classList.add('open'); document.body.style.overflow='hidden'; }
+function closeM(id) { document.getElementById(id).classList.remove('open'); document.body.style.overflow=''; }
+function overlayClose(e,id) { if (e.target.classList.contains('modal-overlay')) closeM(id); }
+
+// ============================================================
+// Dummy Data
+// ============================================================
+async function insertDummy() {
+  const cnt = await dbAll().then(r=>r.length);
+  if (cnt > 0) return;
+  const now = nowISO();
+  const sid1='sid_kimetsu', sid2='sid_shingeki';
+  const a1='吾峠呼世晴', t1='鬼滅の刃';
+  const a2='諫山創',     t2='進撃の巨人';
+  const books = [
+    ...[1,2,3,4].map(v => ({
+      id: makeId(a1,t1,v,'manga'), type:'manga', title:t1, author:a1,
+      isbn: ['9784088812342','9784088812359','9784088812366','9784088812373'][v-1]||'',
+      series_id:sid1, volume:v,
+      publisher:'集英社', published_date: ['201602','201604','201605','201607'][v-1]||'',
+      memo:'', status: v===3?'lending':'available',
+      borrower: v===3?'田中太郎':'', borrow_date: v===3?today():'',
+      created_at:now, updated_at:now,
+    })),
+    ...[1,2,3].map(v => ({
+      id: makeId(a2,t2,v,'manga'), type:'manga', title:t2, author:a2,
+      isbn: ['9784063847611','9784063847628','9784063847635'][v-1]||'',
+      series_id:sid2, volume:v,
+      publisher:'講談社', published_date: ['200906','200910','201001'][v-1]||'',
+      memo: v===1?'初版':'', status:'available', borrower:'', borrow_date:'',
+      created_at:now, updated_at:now,
+    })),
+    { id:makeId('ピーター・ティール','ゼロ・トゥ・ワン',null,'book'), type:'book', title:'ゼロ・トゥ・ワン', author:'ピーター・ティール', isbn:'9784140816615', series_id:null, volume:null, publisher:'NHK出版', published_date:'201409', memo:'必読', status:'available', borrower:'', borrow_date:'', created_at:now, updated_at:now },
+    { id:makeId('ユヴァル・ノア・ハラリ','サピエンス全史 上',null,'book'), type:'book', title:'サピエンス全史 上', author:'ユヴァル・ノア・ハラリ', isbn:'9784309226712', series_id:null, volume:null, publisher:'河出書房新社', published_date:'201609', memo:'', status:'available', borrower:'', borrow_date:'', created_at:now, updated_at:now },
+    { id:makeId('','WIRED Vol.50',null,'magazine'), type:'magazine', title:'WIRED Vol.50', author:'', isbn:'9784048970051', series_id:null, volume:null, publisher:'KADOKAWA', published_date:'202301', memo:'', status:'available', borrower:'', borrow_date:'', created_at:now, updated_at:now },
+  ];
+  await dbPutMany(books);
+}
+
+// ============================================================
+// Init
+// ============================================================
+async function init() {
+  initTheme();
+  try {
+    await initDB();
+    await insertDummy();
+    await loadBooks();
+  } catch(e) {
+    document.getElementById('empty').style.display = 'block';
+    document.getElementById('empty').querySelector('h3').textContent = 'データベースエラー';
+    document.getElementById('empty').querySelector('p').textContent =
+      'IndexedDBが使用できません。プライベートモードを解除してください。';
+    toast('IndexedDB初期化エラー: '+e.message,'err');
+  }
+}
+init();
+</script>
+
+<!--
+====================================================
+実装済み（v3）:
+
+【バーコード読取】
+- ZXing.js (CDN: unpkg.com) によるカメラリアルタイムスキャン
+  対応フォーマット: ISBN-13 / EAN-13 (978・979始まり13桁)
+  制約: file://プロトコルではカメラAPIが動作しないブラウザが多い
+        → HTTPSまたはlocalhostでの動作を推奨
+        → file://の場合は画像アップロード読取で代替
+- 画像ファイルアップロード読取（ドラッグ&ドロップ対応）
+- スキャン失敗時は手入力フォームへ自然に切替可
+
+【書誌情報自動取得】
+- ISBNスキャン後: openBD API でタイトル・著者・出版社・発売日を自動入力
+  openBD: 国内向け書誌DB（登録不要・無料・和書カバレッジが高い）
+- シリーズ一括登録時の「ISBN一括取得」:
+  Google Books API でタイトル+著者+巻数からISBNを逆引き
+  → openBD で出版社・発売日を補完
+  → API キー不要（Google Books は1日1000リクエスト上限あり）
+  → 取得できなかった巻はISBN空欄で登録（登録フロー停止なし）
+
+【DB スキーマ追加】
+- publisher      (出版社)
+- published_date (発売日: YYYYMM形式)
+
+【CSV列定義更新】
+id, type, title, author, isbn, series_id, volume,
+publisher, published_date, memo, status, borrower, borrow_date
+
+【オフライン制約】
+- ZXing.js (CDN) が使えない場合: カメラ・画像スキャン機能が無効
+- openBD / Google Books API: オフライン時は書誌自動取得が無効
+  いずれも操作継続は可能（手入力へのフォールバックあり）
+
+【今後の改善案】
+- ZXing.js をローカルにバンドルしてオフライン対応
+- openBD の全件取得キャッシュでローカル書誌DB化
+- シリーズ一覧ビュー（欠番可視化）
+- 返却期限・督促機能（要望があれば追加）
+====================================================
+-->
+</body>
+</html>
