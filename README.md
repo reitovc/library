@@ -2,6 +2,8 @@
 
 個人の蔵書（漫画・書籍・雑誌）をブラウザだけで管理できるオフライン対応の単一HTMLファイルツールです。
 
+https://reitovc.github.io/library/library_v4.html
+
 ## 特徴
 
 - **インストール不要** — HTMLファイルをブラウザで開くだけで動作
